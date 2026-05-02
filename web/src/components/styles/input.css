@@ -1,0 +1,132 @@
+/* Input.css */
+
+/* ─── Shared field base ───────────────────────────────── */
+.field-base {
+  display: block;
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 0.5px solid var(--border-default);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.field-base::placeholder {
+  color: var(--text-muted);
+}
+
+.field-base:hover:not(:disabled):not(:focus) {
+  border-color: var(--border-strong);
+}
+
+.field-base:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(55, 138, 221, 0.12);
+}
+
+.field-base:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--bg-sunken);
+}
+
+.field-error {
+  border-color: var(--color-red-400) !important;
+}
+.field-error:focus {
+  box-shadow: 0 0 0 3px rgba(226, 75, 74, 0.12) !important;
+}
+
+/* ─── Input sizes ─────────────────────────────────────── */
+.input-sm  { height: 28px; padding: 0 var(--space-3); font-size: var(--text-sm); border-radius: var(--radius-sm); }
+.input-md  { height: 34px; padding: 0 var(--space-3); }
+.input-lg  { height: 42px; padding: 0 var(--space-4); font-size: var(--text-md); border-radius: var(--radius-lg); }
+
+/* ─── Input with icon ─────────────────────────────────── */
+.input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-icon-left,
+.input-icon-right {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  line-height: 1;
+}
+
+.input-icon-left  { left: var(--space-3); }
+.input-icon-right { right: var(--space-3); }
+
+.input-has-left  { padding-left: calc(var(--space-3) + 18px + var(--space-2)) !important; }
+.input-has-right { padding-right: calc(var(--space-3) + 18px + var(--space-2)) !important; }
+
+/* ─── Textarea ────────────────────────────────────────── */
+.textarea {
+  resize: vertical;
+  padding: var(--space-2) var(--space-3);
+  line-height: var(--leading-loose);
+  min-height: 80px;
+}
+
+/* ─── Select ──────────────────────────────────────────── */
+.select {
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%239e9c95' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+  padding-right: calc(var(--space-3) + 20px);
+}
+
+/* ─── Field label + helper ────────────────────────────── */
+.field-label {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
+  line-height: 1;
+}
+
+.field-label-required::after {
+  content: ' *';
+  color: var(--color-red-400);
+}
+
+.field-helper {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-top: var(--space-1);
+  line-height: var(--leading-normal);
+}
+
+.field-error-msg {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--color-red-600);
+  margin-top: var(--space-1);
+  line-height: var(--leading-normal);
+}
+
+/* ─── Search input ────────────────────────────────────── */
+.input-search {
+  background: var(--bg-sunken);
+  border-color: var(--border-subtle);
+}
+.input-search:focus {
+  background: var(--bg-surface);
+}

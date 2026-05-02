@@ -1,0 +1,131 @@
+/* Feedback.css — Toast, Alert, Empty State, Spinner */
+
+/* ─── Toast ───────────────────────────────────────────────── */
+.toast-container {
+  position: fixed;
+  bottom: var(--space-6);
+  right: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  z-index: var(--z-toast);
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-surface);
+  border: 0.5px solid var(--border-default);
+  border-left: 2px solid transparent;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  min-width: 280px;
+  max-width: 380px;
+  pointer-events: auto;
+  animation: toast-in var(--transition-slow) ease;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.toast-success { border-left-color: var(--color-green-400); }
+.toast-error   { border-left-color: var(--color-red-400); }
+.toast-info    { border-left-color: var(--color-blue-400); }
+.toast-warning { border-left-color: var(--color-amber-400); }
+
+.toast-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.toast-success .toast-icon { color: var(--color-green-600); }
+.toast-error   .toast-icon { color: var(--color-red-600); }
+.toast-info    .toast-icon { color: var(--color-blue-600); }
+.toast-warning .toast-icon { color: var(--color-amber-600); }
+
+.toast-body { flex: 1; }
+.toast-title { font-size: var(--text-base); font-weight: var(--weight-medium); line-height: var(--leading-tight); }
+.toast-message { font-size: var(--text-sm); color: var(--text-secondary); margin-top: 2px; line-height: var(--leading-normal); }
+.toast-close { flex-shrink: 0; background: none; border: none; padding: 0; cursor: pointer; color: var(--text-muted); font-size: 16px; line-height: 1; transition: color var(--transition-fast); }
+.toast-close:hover { color: var(--text-primary); }
+
+/* ─── Alert (inline) ──────────────────────────────────────── */
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  border: 0.5px solid transparent;
+  font-size: var(--text-base);
+}
+
+.alert-info    { background: var(--color-blue-50);  border-color: var(--color-blue-100);  color: var(--color-blue-800); }
+.alert-success { background: var(--color-green-50); border-color: var(--color-green-100); color: var(--color-green-800); }
+.alert-warning { background: var(--color-amber-50); border-color: var(--color-amber-100); color: var(--color-amber-600); }
+.alert-error   { background: var(--color-red-50);   border-color: var(--color-red-100);   color: var(--color-red-800); }
+
+.alert-icon { flex-shrink: 0; margin-top: 1px; }
+.alert-body { flex: 1; }
+.alert-title { font-weight: var(--weight-medium); margin-bottom: 2px; }
+.alert-message { font-size: var(--text-sm); opacity: 0.85; line-height: var(--leading-loose); }
+
+/* ─── Empty State ─────────────────────────────────────────── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: var(--space-12) var(--space-8);
+  border: 0.5px dashed var(--border-default);
+  border-radius: var(--radius-xl);
+}
+
+.empty-state-icon {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  margin-bottom: var(--space-4);
+}
+
+.empty-state-title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+  margin-bottom: var(--space-2);
+}
+
+.empty-state-body {
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  line-height: var(--leading-loose);
+  max-width: 360px;
+  margin-bottom: var(--space-6);
+}
+
+/* ─── Spinner ─────────────────────────────────────────────── */
+.spinner {
+  border-radius: var(--radius-full);
+  border-top-color: transparent;
+  animation: spin 0.65s linear infinite;
+  flex-shrink: 0;
+}
+
+.spinner-sm { width: 14px; height: 14px; border: 1.5px solid currentColor; }
+.spinner-md { width: 20px; height: 20px; border: 2px solid currentColor; }
+.spinner-lg { width: 28px; height: 28px; border: 2.5px solid currentColor; }
+
+@keyframes spin { to { transform: rotate(360deg); } }

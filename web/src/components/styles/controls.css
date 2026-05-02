@@ -1,0 +1,175 @@
+/* Controls.css — Checkbox, Radio, Toggle */
+
+/* ─── Shared ──────────────────────────────────────────────── */
+.control-root {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.control-root-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.control-label {
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  line-height: 1.3;
+  padding-top: 1px;
+}
+
+.control-helper {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ─── Checkbox ────────────────────────────────────────────── */
+.checkbox-input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 1px;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+  position: relative;
+}
+
+.checkbox-input:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.checkbox-input:checked {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+}
+
+.checkbox-input:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border: 1.5px solid var(--text-on-dark);
+  border-top: none;
+  border-left: none;
+  transform: rotate(45deg);
+}
+
+.checkbox-input:indeterminate {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+}
+
+.checkbox-input:indeterminate::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 1.5px;
+  background: var(--text-on-dark);
+  border-radius: 1px;
+}
+
+.checkbox-input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(55, 138, 221, 0.2);
+}
+
+/* ─── Radio ───────────────────────────────────────────────── */
+.radio-input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  background: var(--bg-surface);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 1px;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+  position: relative;
+}
+
+.radio-input:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.radio-input:checked {
+  border-color: var(--text-primary);
+  background: var(--bg-surface);
+}
+
+.radio-input:checked::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  background: var(--text-primary);
+  border-radius: var(--radius-full);
+}
+
+.radio-input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(55, 138, 221, 0.2);
+}
+
+/* ─── Toggle ──────────────────────────────────────────────── */
+.toggle-track {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  background: var(--border-default);
+  flex-shrink: 0;
+  margin-top: 1px;
+  transition: background var(--transition-normal);
+  cursor: pointer;
+}
+
+.toggle-track-checked {
+  background: var(--text-primary);
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+  background: white;
+  transition: transform var(--transition-normal);
+  box-shadow: var(--shadow-sm);
+}
+
+.toggle-track-checked .toggle-thumb {
+  transform: translateX(14px);
+}
+
+.toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-input:focus-visible + .toggle-track {
+  box-shadow: 0 0 0 3px rgba(55, 138, 221, 0.2);
+}
