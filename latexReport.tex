@@ -1,0 +1,131 @@
+# FIT4071 Initial Paper LaTeX
+
+```latex
+\documentclass[conference]{IEEEtran}
+
+\usepackage[T1]{fontenc}
+\usepackage{cite}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{amsmath}
+
+\title{FIT4071 FYP Initial Paper Draft\\
+A Hybrid GitHub Data Collection System for Empirical Software Engineering Research}
+
+\author{
+\IEEEauthorblockN{Agamjot Singh, Brandon Luu, William Richter}
+\IEEEauthorblockA{Faculty of Information Technology\\
+Monash University\\
+Melbourne, Australia}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Empirical software engineering research relies heavily on datasets derived from GitHub repositories, including issues, commits, pull requests, and developer interactions. However, existing approaches to GitHub data collection are limited by API rate restrictions, incomplete historical coverage, inconsistent schemas, and missing contextual information. These limitations can reduce dataset reliability and negatively affect the validity and reproducibility of empirical studies.
+
+This project investigates how a hybrid data collection system combining GitHub API retrieval with client-side extraction can improve the completeness, consistency, and historical reliability of GitHub research datasets. The proposed system consists of a Chrome extension, backend processing service, and web-based application that together capture, store, and manage GitHub repository data in a structured format.
+
+The methodology combines API-based retrieval, browser-side extraction, and snapshot-based persistence within a relational database. It is anticipated that the resulting system will reduce missing data issues, preserve historical changes to GitHub entities, and provide a more research-ready dataset compared to existing API-only approaches such as GHTorrent.
+\end{abstract}
+
+\section{Introduction}
+GitHub is the world's largest software hosting platform, containing hundreds of millions of repositories and providing a rich source of software engineering artefacts such as commits, pull requests, issues, and developer interactions. Due to the scale and accessibility of this data, GitHub has become a major source for empirical software engineering research \cite{cosentino2016,kalliamvakou2014,tsay2014}.
+
+Despite its widespread use, previous research has identified significant limitations when mining GitHub data. GitHub's official API imposes rate limits and does not always provide complete historical or contextual information \cite{gousios2017,kalliamvakou2016}. Repository deletion, renamed projects, rebased histories, and evolving repository states can also result in incomplete or inconsistent datasets. These issues reduce the reliability and reproducibility of empirical studies.
+
+In addition to technical limitations, ethical concerns must also be considered when collecting and analysing software repository data. Although GitHub repositories are often publicly accessible, repository data may still contain personal information, intellectual property, or sensitive developer interactions. Prior work has highlighted the importance of ethical data collection, transparency, and responsible handling of mined software repository data \cite{andrews2001,gold2022,gogoll2021}.
+
+Existing systems such as GHTorrent provide large-scale mirrors of GitHub activity, improving accessibility for researchers \cite{gousios2017}. However, these systems still depend heavily on API-based collection and may not capture fine-grained contextual information available within GitHub's user interface. Furthermore, update delays and incomplete historical tracking continue to affect dataset quality.
+
+This project aims to address these limitations through the development of a hybrid GitHub data collection system that combines API retrieval with client-side extraction from GitHub web pages.
+
+\subsection{Research Question}
+How can a hybrid data collection system combining GitHub API access and client-side extraction improve the completeness, consistency, and historical reliability of GitHub datasets for empirical software engineering research?
+
+\subsection{Project Objectives}
+The primary objective of this project is to design and implement a prototype system for improving GitHub data collection and management for empirical software engineering research. The project objectives are:
+
+\begin{itemize}
+    \item Develop a Chrome extension capable of extracting structured data directly from GitHub web pages.
+    \item Design a backend service that integrates API-based and UI-based data into a unified schema.
+    \item Implement a relational database supporting snapshot-based historical persistence.
+    \item Provide a web-based application for querying, filtering, and exporting datasets.
+    \item Explore optional AI-assisted features such as summarisation and relationship detection.
+\end{itemize}
+
+\section{Background and Related Work}
+GitHub has been extensively studied within empirical software engineering research due to its large-scale collaborative development ecosystem. Cosentino et al. \cite{cosentino2016} discuss the popularity of GitHub as a data source and identify limitations in existing collection methods and datasets. Similarly, Kalliamvakou et al. \cite{kalliamvakou2016} demonstrate that assumptions commonly made when mining GitHub repositories can produce misleading results due to incomplete or inconsistent repository data.
+
+Large-scale mirrored datasets such as GHTorrent were developed to improve access to GitHub data \cite{gousios2017}. While these datasets significantly improve scalability for researchers, they still inherit many limitations from GitHub's API, including incomplete historical tracking and delays in updates.
+
+Research has also explored the social and technical characteristics of GitHub collaboration. Tsay et al. \cite{tsay2014} examined how social interactions and technical contributions influence pull request evaluation, demonstrating the importance of preserving contextual repository information.
+
+Ethical considerations in empirical software engineering have also been widely discussed. Andrews and Pradhan \cite{andrews2001} highlight the limitations of policy-based approaches to software engineering ethics, while Gold and Krinke \cite{gold2022} specifically discuss ethical concerns related to mining software repositories. Gogoll et al. \cite{gogoll2021} further argue for ethical deliberation throughout the software development process.
+
+The proposed project extends prior work by combining API-based retrieval with client-side extraction to capture additional contextual information while supporting historical persistence and improved dataset consistency.
+
+\section{Methodology and Technical Overview}
+The project follows a system design and implementation methodology centred around a hybrid GitHub data collection architecture. The proposed system consists of three main components: a Chrome extension, a backend processing service, and a web-based application.
+
+The Chrome extension captures contextual information directly from GitHub web pages, including repository artefacts and metadata that may not be consistently accessible through the GitHub API alone. This extracted information is transmitted to a backend service that integrates extension data with GitHub API responses into a unified schema.
+
+To improve dataset reliability over time, collected information will be stored within a relational database using snapshot-based persistence. Rather than overwriting records, historical versions of GitHub entities will be retained to support reproducibility and temporal analysis where repositories, issues, or pull requests may later be modified or deleted.
+
+The web application will provide tools for browsing, filtering, and exporting datasets to support empirical software engineering research workflows. Additional optional AI-assisted functionality, such as summarisation and relationship detection between issues and pull requests, may also be explored.
+
+The proposed system will be evaluated by comparing the completeness, consistency, and historical traceability of collected datasets against existing API-only approaches.
+
+\section{Expected Outcomes}
+It is anticipated that the proposed system will improve the completeness and consistency of GitHub-derived research datasets compared to existing API-only and mirrored approaches. The system is expected to reduce missing contextual information, improve historical traceability of repository entities, and preserve modified or deleted repository artefacts.
+
+The project also aims to contribute a practical research tool capable of supporting higher-quality empirical software engineering studies through improved dataset reliability and accessibility.
+
+\begin{thebibliography}{00}
+
+\bibitem{cosentino2016}
+V. Cosentino, J. Luis, and J. Cabot,
+``Findings from GitHub: Methods, Datasets and Limitations,''
+in \textit{Proceedings of the 13th International Conference on Mining Software Repositories}, 2016.
+
+\bibitem{kalliamvakou2014}
+E. Kalliamvakou, G. Gousios, K. Blincoe, L. Singer, D. M. German, and D. Damian,
+``The Promises and Perils of Mining GitHub,''
+in \textit{Proceedings of the 11th Working Conference on Mining Software Repositories}, 2014.
+
+\bibitem{tsay2014}
+J. Tsay, L. Dabbish, and J. Herbsleb,
+``Influence of Social and Technical Factors for Evaluating Contribution in GitHub,''
+in \textit{Proceedings of the 36th International Conference on Software Engineering}, 2014.
+
+\bibitem{gousios2017}
+G. Gousios and D. Spinellis,
+``Mining Software Engineering Data from GitHub,''
+in \textit{2017 IEEE/ACM 39th International Conference on Software Engineering Companion (ICSE-C)}, Buenos Aires, Argentina, 2017, pp. 501--502.
+
+\bibitem{kalliamvakou2016}
+E. Kalliamvakou et al.,
+``An In-Depth Study of the Promises and Perils of Mining GitHub,''
+\textit{Empirical Software Engineering}, vol. 21, no. 5, pp. 2035--2071, 2016.
+
+\bibitem{andrews2001}
+A. A. Andrews and A. S. Pradhan,
+``Ethical Issues in Empirical Software Engineering: The Limits of Policy,''
+\textit{Empirical Software Engineering}, vol. 6, no. 2, pp. 105--110, 2001.
+
+\bibitem{gold2022}
+N. E. Gold and J. Krinke,
+``Ethics in the Mining of Software Repositories,''
+\textit{Empirical Software Engineering}, vol. 27, no. 1, p. 17, 2022.
+
+\bibitem{gogoll2021}
+J. Gogoll, N. Zuber, S. Kacianka, T. Greger, A. Pretschner, and J. Nida-Rumelin,
+``Ethics in the Software Development Process: From Codes of Conduct to Ethical Deliberation,''
+\textit{Philosophy \& Technology}, vol. 34, no. 4, pp. 1085--1108, 2021.
+
+\end{thebibliography}
+
+\end{document}
+```
