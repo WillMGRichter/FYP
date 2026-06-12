@@ -42,7 +42,7 @@ export const Field: React.FC<FieldProps> = ({
 );
 
 // ─── Text Input ───────────────────────────────────────────
-interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size'> {
   size?: FieldSize;
   label?: string;
   helper?: string;

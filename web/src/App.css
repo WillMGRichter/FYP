@@ -1,74 +1,288 @@
-:root {
-  --bg-page: #ffffff;
-  --bg-surface: #f8fafc;
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #64748b;
-  --border: #e2e8f0;
-}
-
-/* DARK MODE */
-[data-theme="dark"] {
-  --bg-page: #0b0f14;
-  --bg-surface: #121821;
-  --text-primary: #e6edf3;
-  --text-secondary: #9fb0c3;
-  --text-muted: #6b7c93;
-  --border: #1f2a37;
-}
-
-/* Layout */
-.app {
-  min-height: 100vh;
+.dashboard {
+  min-height: calc(100vh - 52px);
   background: var(--bg-page);
   color: var(--text-primary);
-  font-family: system-ui, -apple-system, sans-serif;
-}
-
-/* Hero */
-.hero {
-  padding: 80px 24px;
   display: flex;
-  justify-content: center;
-  text-align: center;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-8);
+  text-align: left;
 }
 
-.hero-content {
-  max-width: 700px;
-}
-
-.hero-text {
-  margin-top: 16px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-}
-
-.hero-actions {
-  margin-top: 24px;
+.dashboard-header {
   display: flex;
-  gap: 12px;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-6);
 }
 
-/* Features */
-.features {
+.dashboard-header-actions {
+  flex-shrink: 0;
+}
+
+.dashboard-alert {
+  max-width: 980px;
+}
+
+.account-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background: var(--bg-surface);
+  border: 0.5px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.auth-form {
+  width: 100%;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
-  padding: 40px 24px;
-  max-width: 900px;
-  margin: 0 auto;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.8fr) minmax(160px, 0.8fr) auto auto;
+  gap: var(--space-3);
+  align-items: end;
 }
 
-.features h3 {
-  margin-bottom: 8px;
-  font-size: 16px;
+.auth-heading {
+  align-self: center;
 }
 
-/* Footer */
-.footer {
-  text-align: center;
-  padding: 40px 0;
-  border-top: 1px solid var(--border);
-  margin-top: 40px;
+.account-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.account-actions strong {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-primary);
+  font-size: var(--text-xl);
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.metric-card {
+  min-height: 94px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.metric-card strong {
+  font-size: var(--text-3xl);
+  line-height: 1;
+  color: var(--text-primary);
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(360px, 1.1fr);
+  gap: var(--space-4);
+  align-items: stretch;
+}
+
+.sync-panel,
+.activity-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.sync-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.repo-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.activity-row {
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(140px, auto);
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 0.5px solid var(--border-subtle);
+}
+
+.activity-row:last-child {
+  border-bottom: 0;
+}
+
+.activity-title {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loading-row,
+.loading-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.repository-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.repository-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--space-4);
+}
+
+.repository-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 260px;
+}
+
+.repository-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.repository-card-header .body-text-secondary {
+  margin-top: var(--space-2);
+}
+
+.repository-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.repository-facts span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 var(--space-2);
+  border: 0.5px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.repository-counts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+  margin-top: auto;
+}
+
+.repository-counts div {
+  min-height: 58px;
+  border: 0.5px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--bg-page);
+}
+
+.repository-counts strong {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--text-xl);
+  color: var(--text-primary);
+}
+
+.repository-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.contribution-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--space-4);
+}
+
+.contribution-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.contribution-counts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.contribution-counts span {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+@media (max-width: 900px) {
+  .dashboard {
+    padding: var(--space-5);
+  }
+
+  .dashboard-header,
+  .repository-card-header,
+  .account-strip,
+  .contribution-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .metric-grid,
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-form {
+    grid-template-columns: 1fr;
+  }
+
+  .account-actions {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .activity-row {
+    grid-template-columns: 1fr;
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 560px) {
+  .repo-fields,
+  .repository-counts {
+    grid-template-columns: 1fr;
+  }
 }

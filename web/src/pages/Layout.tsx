@@ -1,29 +1,31 @@
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Navbar } from '../components/ui/Layout';
 import { Button } from '../components/ui/Button';
 
 export default function Layout() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const navItems = [
     { key: 'home', label: 'Home', href: '/' },
     { key: 'components', label: 'Components', href: '/components' },
     { key: 'settings', label: 'Settings', href: '/settings' },
   ];
+  const activeKey = navItems.find((item) => item.href === location.pathname)?.key ?? 'home';
 
   return (
     <div>
-      {/* Global Top Bar */}
       <Navbar
         brand={{ label: 'GitResearch', icon: 'G' }}
         items={navItems}
-        activeKey="home"
+        activeKey={activeKey}
+        onNavigate={navigate}
         end={
-          <Button variant="primary" size="sm">
+          <Button variant="primary" size="sm" onClick={() => navigate('/')}>
             New Collection
           </Button>
         }
       />
 
-      {/* Page content renders here */}
       <main>
         <Outlet />
       </main>

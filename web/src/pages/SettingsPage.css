@@ -1,0 +1,75 @@
+.settings-page {
+  min-height: calc(100vh - 52px);
+  background: var(--bg-page);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-8);
+  text-align: left;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.2fr) minmax(280px, 0.8fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.settings-card,
+.token-form,
+.token-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.token-list {
+  padding-top: var(--space-2);
+  border-top: 0.5px solid var(--border-subtle);
+}
+
+.token-row {
+  min-height: 66px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  border: 0.5px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-page);
+}
+
+.token-rate {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.token-rate strong {
+  color: var(--text-primary);
+}
+
+.settings-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+@media (max-width: 840px) {
+  .settings-page {
+    padding: var(--space-5);
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .token-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .token-rate {
+    text-align: left;
+  }
+}
