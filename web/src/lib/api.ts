@@ -1,4 +1,11 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api';
+const SESSION_KEY = 'gitresearch_session_token';
+
+export type Account = {
+  id: string;
+  email: string;
+  displayName: string;
+};
 
 export type GitHubToken = {
   id: string;
@@ -31,6 +38,12 @@ export type Repository = {
     collectionRuns: number;
   };
   collectionRuns?: CollectionRun[];
+  isStarred?: boolean;
+  star?: {
+    id: string;
+    note: string | null;
+    createdAt: string;
+  } | null;
 };
 
 export type CollectionRun = {
@@ -53,10 +66,40 @@ export type CollectionRun = {
   } | null;
 };
 
+export type Contribution = {
+  id: string;
+  githubLogin: string;
+  commitsCount: number;
+  issuesCount: number;
+  pullsCount: number;
+  lastObservedAt: string | null;
+  repository: {
+    fullName: string;
+    htmlUrl: string;
+    language: string | null;
+  };
+};
+
+export const sessionStore = {
+  get() {
+    return localStorage.getItem(SESSION_KEY);
+  },
+
+  set(token: string) {
+    localStorage.setItem(SESSION_KEY, token);
+  },
+
+  clear() {
+    localStorage.removeItem(SESSION_KEY);
+  },
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const sessionToken = sessionStore.get();
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
+      ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
       ...init?.headers,
     },
     ...init,
@@ -71,6 +114,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  async register(input: { email: string; displayName: string; password: string }) {
+    return request<{ account: Account; session: { token: string; expiresAt: string } }>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
+  async login(input: { email: string; password: string }) {
+    return request<{ account: Account; session: { token: string; expiresAt: string } }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
+  async me() {
+    return request<{ account: Account | null }>('/auth/me');
+  },
+
+  async logout() {
+    return request<{ ok: boolean }>('/auth/logout', { method: 'POST' });
+  },
+
   async listTokens() {
     return request<{ tokens: GitHubToken[] }>('/github/tokens');
   },
@@ -95,5 +160,22 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     });
+  },
+
+  async starRepository(id: string, note?: string) {
+    return request<{ star: Repository['star'] }>(`/repositories/${id}/star`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    });
+  },
+
+  async unstarRepository(id: string) {
+    return request<{ ok: boolean }>(`/repositories/${id}/star`, {
+      method: 'DELETE',
+    });
+  },
+
+  async listContributions() {
+    return request<{ contributions: Contribution[] }>('/account/contributions');
   },
 };

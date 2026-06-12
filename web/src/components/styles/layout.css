@@ -44,12 +44,17 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--text-primary);
-  color: var(--text-on-dark);
+  background: var(--color-blue-600);
+  color: var(--color-white);
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
   font-weight: var(--weight-semi);
   flex-shrink: 0;
+}
+
+[data-theme="dark"] .navbar-brand-icon {
+  background: var(--color-blue-200);
+  color: var(--color-blue-900);
 }
 
 .navbar-nav {
@@ -214,7 +219,7 @@
 /* ─── Card ───────────────────────────────────────────────── */
 .card {
   background: var(--bg-surface);
-  border: 0.5px solid var(--border-subtle);
+  border: 0.5px solid var(--border-default);
   border-radius: var(--radius-xl);
   padding: var(--space-5) var(--space-6);
 }

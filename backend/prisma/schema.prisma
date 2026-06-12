@@ -26,8 +26,35 @@ enum CollectionStatus {
   FAILED
 }
 
+model Account {
+  id               String                @id @default(cuid())
+  email            String                @unique
+  displayName      String
+  passwordHash     String
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  sessions         AccountSession[]
+  githubTokens     GitHubToken[]
+  collectionRuns   CollectionRun[]
+  starredRepos     StarredRepository[]
+  contributions    AccountContribution[]
+}
+
+model AccountSession {
+  id        String   @id @default(cuid())
+  accountId String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@index([expiresAt])
+}
+
 model GitHubToken {
   id             String          @id @default(cuid())
+  accountId      String?
   label          String
   githubLogin    String?
   githubUserId   BigInt?
@@ -40,8 +67,10 @@ model GitHubToken {
   lastValidatedAt DateTime?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
+  account        Account?        @relation(fields: [accountId], references: [id], onDelete: Cascade)
   collectionRuns CollectionRun[]
 
+  @@index([accountId])
   @@index([githubLogin])
 }
 
@@ -69,6 +98,8 @@ model Repository {
   artifacts        RepositoryArtifact[]
   snapshots        EntitySnapshot[]
   collectionRuns   CollectionRun[]
+  starredBy        StarredRepository[]
+  contributions    AccountContribution[]
 
   @@index([owner, name])
   @@index([language])
@@ -119,6 +150,7 @@ model EntitySnapshot {
 
 model CollectionRun {
   id            String           @id @default(cuid())
+  accountId     String?
   repositoryId  String?
   tokenId       String?
   status        CollectionStatus @default(PENDING)
@@ -130,10 +162,43 @@ model CollectionRun {
   issuesCount   Int              @default(0)
   pullsCount    Int              @default(0)
   commitsCount  Int              @default(0)
+  account       Account?         @relation(fields: [accountId], references: [id], onDelete: SetNull)
   repository    Repository?      @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
   token         GitHubToken?     @relation(fields: [tokenId], references: [id], onDelete: SetNull)
   snapshots     EntitySnapshot[]
 
+  @@index([accountId])
   @@index([status])
   @@index([startedAt])
+}
+
+model StarredRepository {
+  id           String     @id @default(cuid())
+  accountId    String
+  repositoryId String
+  note         String?
+  createdAt    DateTime   @default(now())
+  account      Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, repositoryId])
+  @@index([repositoryId])
+}
+
+model AccountContribution {
+  id             String     @id @default(cuid())
+  accountId      String
+  repositoryId   String
+  githubLogin    String
+  commitsCount   Int        @default(0)
+  issuesCount    Int        @default(0)
+  pullsCount     Int        @default(0)
+  lastObservedAt DateTime?
+  updatedAt      DateTime   @updatedAt
+  account        Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  repository     Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, repositoryId, githubLogin])
+  @@index([accountId])
+  @@index([githubLogin])
 }

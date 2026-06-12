@@ -67,6 +67,17 @@ type TokenPayload = {
   token?: string;
 };
 
+type AccountPayload = {
+  email?: string;
+  displayName?: string;
+  password?: string;
+};
+
+type LoginPayload = {
+  email?: string;
+  password?: string;
+};
+
 type SyncPayload = {
   owner?: string;
   name?: string;
@@ -80,6 +91,12 @@ type ExtensionSnapshotPayload = {
   githubNumber?: number;
   githubSha?: string;
   payload?: unknown;
+};
+
+type AuthAccount = {
+  id: string;
+  email: string;
+  displayName: string;
 };
 
 const parseDate = (value?: string | null) => (value ? new Date(value) : null);
@@ -117,6 +134,112 @@ const decryptToken = (encryptedToken: string) => {
 const payloadHash = (payload: unknown) =>
   crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 
+const sessionTokenHash = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
+
+const passwordHash = (password: string) => {
+  const salt = crypto.randomBytes(16).toString('base64');
+  const hash = crypto.pbkdf2Sync(password, salt, 120000, 32, 'sha256').toString('base64');
+  return `pbkdf2_sha256$120000$${salt}$${hash}`;
+};
+
+const verifyPassword = (password: string, storedHash: string) => {
+  const [algorithm, iterationsText, salt, hash] = storedHash.split('$');
+  if (algorithm !== 'pbkdf2_sha256' || !iterationsText || !salt || !hash) return false;
+
+  const candidate = crypto
+    .pbkdf2Sync(password, salt, Number(iterationsText), 32, 'sha256')
+    .toString('base64');
+  return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(candidate));
+};
+
+const publicAccount = (account: AuthAccount) => ({
+  id: account.id,
+  email: account.email,
+  displayName: account.displayName,
+});
+
+async function createSession(accountId: string) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
+
+  await prisma.accountSession.create({
+    data: {
+      accountId,
+      tokenHash: sessionTokenHash(token),
+      expiresAt,
+    },
+  });
+
+  return { token, expiresAt };
+}
+
+async function getOptionalAccount(request: { headers: { authorization?: string } }) {
+  const authorization = request.headers.authorization;
+  const token = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : undefined;
+  if (!token) return null;
+
+  const session = await prisma.accountSession.findUnique({
+    where: { tokenHash: sessionTokenHash(token) },
+    include: { account: true },
+  });
+
+  if (!session || session.expiresAt < new Date()) return null;
+
+  return publicAccount(session.account);
+}
+
+async function requireAccount(request: { headers: { authorization?: string } }, reply: { code: (status: number) => { send: (payload: unknown) => unknown } }) {
+  const account = await getOptionalAccount(request);
+  if (!account) {
+    reply.code(401).send({ error: 'Sign in to use account features.' });
+    return null;
+  }
+
+  return account;
+}
+
+async function refreshContributions(input: {
+  accountId: string;
+  repositoryId: string;
+  githubLogin?: string | null;
+  issues: GitHubIssue[];
+  pulls: GitHubPullRequest[];
+  commits: GitHubCommit[];
+}) {
+  if (!input.githubLogin) return;
+
+  const commitsCount = input.commits.filter((commit) => commit.author?.login === input.githubLogin).length;
+  const issuesCount = input.issues.filter((issue) => issue.user?.login === input.githubLogin).length;
+  const pullsCount = input.pulls.filter((pull) => pull.user?.login === input.githubLogin).length;
+
+  if (commitsCount + issuesCount + pullsCount === 0) return;
+
+  await prisma.accountContribution.upsert({
+    where: {
+      accountId_repositoryId_githubLogin: {
+        accountId: input.accountId,
+        repositoryId: input.repositoryId,
+        githubLogin: input.githubLogin,
+      },
+    },
+    update: {
+      commitsCount,
+      issuesCount,
+      pullsCount,
+      lastObservedAt: new Date(),
+    },
+    create: {
+      accountId: input.accountId,
+      repositoryId: input.repositoryId,
+      githubLogin: input.githubLogin,
+      commitsCount,
+      issuesCount,
+      pullsCount,
+      lastObservedAt: new Date(),
+    },
+  });
+}
+
 async function githubFetch<T>(path: string, token?: string): Promise<{ data: T; response: Response }> {
   const response = await fetch(`${GITHUB_API}${path}`, {
     headers: {
@@ -135,10 +258,15 @@ async function githubFetch<T>(path: string, token?: string): Promise<{ data: T; 
   return { data, response };
 }
 
-async function getToken(tokenId?: string) {
+async function getToken(tokenId?: string, accountId?: string) {
   if (!tokenId) return undefined;
 
-  const token = await prisma.gitHubToken.findUnique({ where: { id: tokenId } });
+  const token = await prisma.gitHubToken.findFirst({
+    where: {
+      id: tokenId,
+      ...(accountId ? { accountId } : {}),
+    },
+  });
   if (!token) {
     throw new Error('Selected GitHub token was not found.');
   }
@@ -194,11 +322,11 @@ async function createSnapshot(input: {
 app.addHook('onRequest', async (request, reply) => {
   const origin = request.headers.origin;
   if (origin) {
-    reply.header('Access-Control-Allow-Origin', origin);
+  reply.header('Access-Control-Allow-Origin', origin);
     reply.header('Vary', 'Origin');
   }
   reply.header('Access-Control-Allow-Headers', 'content-type, authorization');
-  reply.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  reply.header('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
 
   if (request.method === 'OPTIONS') {
     return reply.code(204).send();
@@ -212,8 +340,67 @@ app.get(`${API_PREFIX}/health`, async () => ({
   service: 'github-research-backend',
 }));
 
-app.get(`${API_PREFIX}/github/tokens`, async () => {
+app.post<{ Body: AccountPayload }>(`${API_PREFIX}/auth/register`, async (request, reply) => {
+  const email = request.body.email?.trim().toLowerCase();
+  const displayName = request.body.displayName?.trim();
+  const password = request.body.password ?? '';
+
+  if (!email || !displayName || password.length < 8) {
+    return reply.code(400).send({ error: 'Email, display name, and an 8+ character password are required.' });
+  }
+
+  const existing = await prisma.account.findUnique({ where: { email } });
+  if (existing) {
+    return reply.code(409).send({ error: 'An account with that email already exists.' });
+  }
+
+  const account = await prisma.account.create({
+    data: {
+      email,
+      displayName,
+      passwordHash: passwordHash(password),
+    },
+  });
+  const session = await createSession(account.id);
+
+  return reply.code(201).send(jsonForResponse({ account: publicAccount(account), session }));
+});
+
+app.post<{ Body: LoginPayload }>(`${API_PREFIX}/auth/login`, async (request, reply) => {
+  const email = request.body.email?.trim().toLowerCase();
+  const password = request.body.password ?? '';
+
+  if (!email || !password) {
+    return reply.code(400).send({ error: 'Email and password are required.' });
+  }
+
+  const account = await prisma.account.findUnique({ where: { email } });
+  if (!account || !verifyPassword(password, account.passwordHash)) {
+    return reply.code(401).send({ error: 'Email or password is incorrect.' });
+  }
+
+  const session = await createSession(account.id);
+  return jsonForResponse({ account: publicAccount(account), session });
+});
+
+app.get(`${API_PREFIX}/auth/me`, async (request) => {
+  const account = await getOptionalAccount(request);
+  return { account };
+});
+
+app.post(`${API_PREFIX}/auth/logout`, async (request) => {
+  const authorization = request.headers.authorization;
+  const token = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : undefined;
+  if (token) {
+    await prisma.accountSession.deleteMany({ where: { tokenHash: sessionTokenHash(token) } });
+  }
+  return { ok: true };
+});
+
+app.get(`${API_PREFIX}/github/tokens`, async (request) => {
+  const account = await getOptionalAccount(request);
   const tokens = await prisma.gitHubToken.findMany({
+    where: account ? { accountId: account.id } : { accountId: null },
     orderBy: { createdAt: 'desc' },
     select: {
       id: true,
@@ -233,6 +420,9 @@ app.get(`${API_PREFIX}/github/tokens`, async () => {
 });
 
 app.post<{ Body: TokenPayload }>(`${API_PREFIX}/github/tokens`, async (request, reply) => {
+  const account = await requireAccount(request, reply);
+  if (!account) return;
+
   const token = request.body.token?.trim();
   if (!token) {
     return reply.code(400).send({ error: 'A GitHub API token is required.' });
@@ -250,6 +440,7 @@ app.post<{ Body: TokenPayload }>(`${API_PREFIX}/github/tokens`, async (request, 
 
   const saved = await prisma.gitHubToken.create({
     data: {
+      accountId: account.id,
       label: request.body.label?.trim() || `${user.login} token`,
       githubLogin: user.login,
       githubUserId: BigInt(user.id),
@@ -277,7 +468,8 @@ app.post<{ Body: TokenPayload }>(`${API_PREFIX}/github/tokens`, async (request, 
   return reply.code(201).send(jsonForResponse({ token: saved }));
 });
 
-app.get(`${API_PREFIX}/repositories`, async () => {
+app.get(`${API_PREFIX}/repositories`, async (request) => {
+  const account = await getOptionalAccount(request);
   const repositories = await prisma.repository.findMany({
     orderBy: { updatedAt: 'desc' },
     include: {
@@ -289,17 +481,31 @@ app.get(`${API_PREFIX}/repositories`, async () => {
         },
       },
       collectionRuns: {
+        where: account ? { accountId: account.id } : undefined,
         orderBy: { startedAt: 'desc' },
         take: 1,
+      },
+      starredBy: {
+        where: account ? { accountId: account.id } : { accountId: '__none__' },
+        select: { id: true, note: true, createdAt: true },
       },
     },
   });
 
-  return jsonForResponse({ repositories });
+  return jsonForResponse({
+    repositories: repositories.map((repository) => ({
+      ...repository,
+      isStarred: repository.starredBy.length > 0,
+      star: repository.starredBy[0] ?? null,
+      starredBy: undefined,
+    })),
+  });
 });
 
-app.get(`${API_PREFIX}/collections`, async () => {
+app.get(`${API_PREFIX}/collections`, async (request) => {
+  const account = await getOptionalAccount(request);
   const runs = await prisma.collectionRun.findMany({
+    where: account ? { accountId: account.id } : { accountId: null },
     orderBy: { startedAt: 'desc' },
     take: 25,
     include: {
@@ -322,6 +528,7 @@ app.get(`${API_PREFIX}/collections`, async () => {
 });
 
 app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (request, reply) => {
+  const account = await getOptionalAccount(request);
   const owner = request.body.owner?.trim();
   const name = request.body.name?.trim();
 
@@ -329,9 +536,10 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
     return reply.code(400).send({ error: 'Repository owner and name are required.' });
   }
 
-  const selectedToken = await getToken(request.body.tokenId);
+  const selectedToken = await getToken(request.body.tokenId, account?.id);
   const run = await prisma.collectionRun.create({
     data: {
+      accountId: account?.id,
       tokenId: selectedToken?.id,
       status: 'RUNNING',
       source: 'github_api',
@@ -534,6 +742,27 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
       });
     }
 
+    const accountGithubLogin =
+      account && selectedToken
+        ? (
+            await prisma.gitHubToken.findFirst({
+              where: { id: selectedToken.id, accountId: account.id },
+              select: { githubLogin: true },
+            })
+          )?.githubLogin
+        : null;
+
+    if (account) {
+      await refreshContributions({
+        accountId: account.id,
+        repositoryId: repository.id,
+        githubLogin: accountGithubLogin,
+        issues,
+        pulls: pullPayloads,
+        commits: commitPayloads,
+      });
+    }
+
     const completed = await prisma.collectionRun.update({
       where: { id: run.id },
       data: {
@@ -562,6 +791,70 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
 
     return reply.code(502).send({ error: message });
   }
+});
+
+app.post<{ Params: { id: string }; Body: { note?: string } }>(`${API_PREFIX}/repositories/:id/star`, async (request, reply) => {
+  const account = await requireAccount(request, reply);
+  if (!account) return;
+
+  const repository = await prisma.repository.findUnique({ where: { id: request.params.id } });
+  if (!repository) {
+    return reply.code(404).send({ error: 'Repository was not found.' });
+  }
+
+  const star = await prisma.starredRepository.upsert({
+    where: {
+      accountId_repositoryId: {
+        accountId: account.id,
+        repositoryId: repository.id,
+      },
+    },
+    update: {
+      note: request.body.note?.trim() || null,
+    },
+    create: {
+      accountId: account.id,
+      repositoryId: repository.id,
+      note: request.body.note?.trim() || null,
+    },
+  });
+
+  return jsonForResponse({ star });
+});
+
+app.delete<{ Params: { id: string } }>(`${API_PREFIX}/repositories/:id/star`, async (request, reply) => {
+  const account = await requireAccount(request, reply);
+  if (!account) return;
+
+  await prisma.starredRepository.deleteMany({
+    where: {
+      accountId: account.id,
+      repositoryId: request.params.id,
+    },
+  });
+
+  return { ok: true };
+});
+
+app.get(`${API_PREFIX}/account/contributions`, async (request, reply) => {
+  const account = await requireAccount(request, reply);
+  if (!account) return;
+
+  const contributions = await prisma.accountContribution.findMany({
+    where: { accountId: account.id },
+    orderBy: { updatedAt: 'desc' },
+    include: {
+      repository: {
+        select: {
+          fullName: true,
+          htmlUrl: true,
+          language: true,
+        },
+      },
+    },
+  });
+
+  return jsonForResponse({ contributions });
 });
 
 app.post<{ Body: ExtensionSnapshotPayload }>(`${API_PREFIX}/extension/snapshots`, async (request, reply) => {

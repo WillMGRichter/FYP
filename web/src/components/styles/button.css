@@ -66,12 +66,17 @@
 
 /* Primary */
 .btn-primary {
-  background: var(--text-primary);
-  color: var(--text-on-dark);
+  background: var(--color-blue-600);
+  color: var(--color-white);
   border-color: transparent;
 }
 .btn-primary:hover:not(:disabled) {
   opacity: 0.85;
+}
+
+[data-theme="dark"] .btn-primary {
+  background: var(--color-blue-200);
+  color: var(--color-blue-900);
 }
 
 /* Secondary (outlined) */

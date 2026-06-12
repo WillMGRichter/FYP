@@ -7,7 +7,7 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Alert, EmptyState, Spinner } from '../components/ui/Feedback';
 import { api } from '../lib/api';
-import type { GitHubToken } from '../lib/api';
+import type { Account, GitHubToken } from '../lib/api';
 import './SettingsPage.css';
 
 const formatDate = (value?: string | null) =>
@@ -16,6 +16,7 @@ const formatDate = (value?: string | null) =>
 export default function SettingsPage() {
   const [darkMode, setDarkMode] = useState(false);
   const [tokens, setTokens] = useState<GitHubToken[]>([]);
+  const [account, setAccount] = useState<Account | null>(null);
   const [label, setLabel] = useState('');
   const [token, setToken] = useState('');
   const [loadingTokens, setLoadingTokens] = useState(true);
@@ -34,9 +35,11 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    api
-      .listTokens()
-      .then((response) => setTokens(response.tokens))
+    Promise.all([api.me(), api.listTokens()])
+      .then(([accountResponse, tokenResponse]) => {
+        setAccount(accountResponse.account);
+        setTokens(tokenResponse.tokens);
+      })
       .catch((loadError: Error) => setError(loadError.message))
       .finally(() => setLoadingTokens(false));
   }, []);
@@ -54,6 +57,12 @@ export default function SettingsPage() {
     setSavingToken(true);
     setError(null);
     setMessage(null);
+
+    if (!account) {
+      setSavingToken(false);
+      setError('Sign in on the Home page before saving GitHub tokens.');
+      return;
+    }
 
     try {
       const response = await api.createToken({ label, token });
@@ -90,6 +99,16 @@ export default function SettingsPage() {
             GitHub API tokens
           </SectionHeading>
 
+          {account ? (
+            <Alert variant="info" title="Account workspace">
+              Tokens saved here belong to {account.displayName}.
+            </Alert>
+          ) : (
+            <Alert variant="warning" title="Sign in required">
+              Create or sign in to an account on the Home page before saving GitHub tokens.
+            </Alert>
+          )}
+
           <form className="token-form" onSubmit={handleCreateToken}>
             <Input
               label="Token label"
@@ -106,7 +125,7 @@ export default function SettingsPage() {
               required
               helper="Use a fine-grained token with read access to the repositories you plan to collect."
             />
-            <Button type="submit" variant="primary" loading={savingToken}>
+            <Button type="submit" variant="primary" loading={savingToken} disabled={!account}>
               Validate and save token
             </Button>
           </form>
@@ -125,7 +144,7 @@ export default function SettingsPage() {
                   <div>
                     <Text>{savedToken.label}</Text>
                     <Caption>
-                      {savedToken.githubLogin ?? 'Unknown user'} · {savedToken.tokenPreview}
+                      {savedToken.githubLogin ?? 'Unknown user'} - {savedToken.tokenPreview}
                     </Caption>
                   </div>
                   <div className="token-rate">

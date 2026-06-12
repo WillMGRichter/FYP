@@ -24,9 +24,45 @@
   max-width: 980px;
 }
 
+.account-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background: var(--bg-surface);
+  border: 0.5px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.auth-form {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.8fr) minmax(160px, 0.8fr) auto auto;
+  gap: var(--space-3);
+  align-items: end;
+}
+
+.auth-heading {
+  align-self: center;
+}
+
+.account-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.account-actions strong {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-primary);
+  font-size: var(--text-xl);
+}
+
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: var(--space-4);
 }
 
@@ -173,19 +209,69 @@
   color: var(--text-primary);
 }
 
+.repository-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.contribution-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--space-4);
+}
+
+.contribution-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.contribution-counts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.contribution-counts span {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
 @media (max-width: 900px) {
   .dashboard {
     padding: var(--space-5);
   }
 
   .dashboard-header,
-  .repository-card-header {
+  .repository-card-header,
+  .account-strip,
+  .contribution-card {
     flex-direction: column;
+    align-items: stretch;
   }
 
   .metric-grid,
   .workspace-grid {
     grid-template-columns: 1fr;
+  }
+
+  .auth-form {
+    grid-template-columns: 1fr;
+  }
+
+  .account-actions {
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 
   .activity-row {

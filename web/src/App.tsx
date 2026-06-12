@@ -8,8 +8,8 @@ import { Alert, EmptyState, Spinner } from './components/ui/Feedback';
 import { Input, Select } from './components/ui/Input';
 import { Card } from './components/ui/Layout';
 import { Caption, Link, PageTitle, SectionHeading, Text } from './components/ui/Typography';
-import { api } from './lib/api';
-import type { CollectionRun, GitHubToken, Repository } from './lib/api';
+import { api, sessionStore } from './lib/api';
+import type { Account, CollectionRun, Contribution, GitHubToken, Repository } from './lib/api';
 
 const formatDate = (value?: string | null) =>
   value
@@ -29,11 +29,18 @@ export default function App() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [runs, setRuns] = useState<CollectionRun[]>([]);
   const [tokens, setTokens] = useState<GitHubToken[]>([]);
+  const [account, setAccount] = useState<Account | null>(null);
+  const [contributions, setContributions] = useState<Contribution[]>([]);
   const [owner, setOwner] = useState('');
   const [name, setName] = useState('');
   const [tokenId, setTokenId] = useState('');
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [email, setEmail] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const stats = useMemo(
@@ -42,27 +49,78 @@ export default function App() {
       artifacts: repositories.reduce((sum, repo) => sum + (repo._count?.artifacts ?? 0), 0),
       snapshots: repositories.reduce((sum, repo) => sum + (repo._count?.snapshots ?? 0), 0),
       completedRuns: runs.filter((run) => run.status === 'COMPLETED').length,
+      starred: repositories.filter((repo) => repo.isStarred).length,
+      contributions: contributions.reduce(
+        (sum, contribution) =>
+          sum + contribution.commitsCount + contribution.issuesCount + contribution.pullsCount,
+        0,
+      ),
     }),
-    [repositories, runs],
+    [repositories, runs, contributions],
   );
 
-  const loadDashboard = async () => {
+  const loadDashboard = async (currentAccount = account) => {
     setError(null);
-    const [repoResponse, runResponse, tokenResponse] = await Promise.all([
+    const requests = [
       api.listRepositories(),
       api.listCollections(),
       api.listTokens(),
-    ]);
+      currentAccount ? api.listContributions() : Promise.resolve({ contributions: [] }),
+    ] as const;
+    const [repoResponse, runResponse, tokenResponse, contributionResponse] = await Promise.all(requests);
     setRepositories(repoResponse.repositories);
     setRuns(runResponse.runs);
     setTokens(tokenResponse.tokens);
+    setContributions(contributionResponse.contributions);
   };
 
   useEffect(() => {
-    loadDashboard()
+    api
+      .me()
+      .then(async ({ account: currentAccount }) => {
+        setAccount(currentAccount);
+        await loadDashboard(currentAccount);
+      })
       .catch((loadError: Error) => setError(loadError.message))
       .finally(() => setLoading(false));
   }, []);
+
+  const clearAuthForm = () => {
+    setEmail('');
+    setDisplayName('');
+    setPassword('');
+  };
+
+  const handleAuth = async (event: FormEvent) => {
+    event.preventDefault();
+    setAuthLoading(true);
+    setError(null);
+
+    try {
+      const response =
+        authMode === 'login'
+          ? await api.login({ email, password })
+          : await api.register({ email, displayName, password });
+      sessionStore.set(response.session.token);
+      setAccount(response.account);
+      clearAuthForm();
+      await loadDashboard(response.account);
+    } catch (authError) {
+      setError(authError instanceof Error ? authError.message : 'Account request failed');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await api.logout().catch(() => undefined);
+    sessionStore.clear();
+    setAccount(null);
+    setTokens([]);
+    setRuns([]);
+    setContributions([]);
+    await loadDashboard(null);
+  };
 
   const handleSync = async (event: FormEvent) => {
     event.preventDefault();
@@ -85,6 +143,24 @@ export default function App() {
     }
   };
 
+  const handleToggleStar = async (repository: Repository) => {
+    if (!account) {
+      setError('Sign in before starring repositories.');
+      return;
+    }
+
+    try {
+      if (repository.isStarred) {
+        await api.unstarRepository(repository.id);
+      } else {
+        await api.starRepository(repository.id);
+      }
+      await loadDashboard();
+    } catch (starError) {
+      setError(starError instanceof Error ? starError.message : 'Could not update starred repository');
+    }
+  };
+
   return (
     <div className="dashboard">
       <section className="dashboard-header">
@@ -92,10 +168,74 @@ export default function App() {
           GitHub research workspace
         </PageTitle>
         <div className="dashboard-header-actions">
-          <Button variant="secondary" onClick={loadDashboard} disabled={loading || syncing}>
+          <Button variant="secondary" onClick={() => loadDashboard()} disabled={loading || syncing}>
             Refresh
           </Button>
         </div>
+      </section>
+
+      <section className="account-strip">
+        {account ? (
+          <>
+            <div>
+              <Caption>Signed in</Caption>
+              <Text>{account.displayName}</Text>
+              <Caption>{account.email}</Caption>
+            </div>
+            <div className="account-actions">
+              <div>
+                <Caption>Starred repos</Caption>
+                <strong>{stats.starred}</strong>
+              </div>
+              <div>
+                <Caption>Observed contributions</Caption>
+                <strong>{stats.contributions}</strong>
+              </div>
+              <Button variant="secondary" onClick={handleLogout}>
+                Sign out
+              </Button>
+            </div>
+          </>
+        ) : (
+          <form className="auth-form" onSubmit={handleAuth}>
+            <div className="auth-heading">
+              <Text>{authMode === 'login' ? 'Sign in to your workspace' : 'Create a workspace account'}</Text>
+              <Caption>Tokens, starred repositories, and contribution summaries are stored per account.</Caption>
+            </div>
+            <Input
+              type="email"
+              placeholder="email@example.com"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+            />
+            {authMode === 'register' && (
+              <Input
+                placeholder="Display name"
+                value={displayName}
+                onChange={(event) => setDisplayName(event.target.value)}
+                required
+              />
+            )}
+            <Input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+            />
+            <Button type="submit" variant="primary" loading={authLoading}>
+              {authMode === 'login' ? 'Sign in' : 'Create account'}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
+            >
+              {authMode === 'login' ? 'Create account' : 'Use existing account'}
+            </Button>
+          </form>
+        )}
       </section>
 
       <section className="metric-grid" aria-label="Dataset summary">
@@ -115,6 +255,14 @@ export default function App() {
           <Caption>Completed runs</Caption>
           <strong>{stats.completedRuns}</strong>
         </Card>
+        <Card className="metric-card">
+          <Caption>Starred</Caption>
+          <strong>{stats.starred}</strong>
+        </Card>
+        <Card className="metric-card">
+          <Caption>Contributions</Caption>
+          <strong>{stats.contributions}</strong>
+        </Card>
       </section>
 
       {error && (
@@ -128,6 +276,11 @@ export default function App() {
           <SectionHeading subtitle="Fetch repository metadata, issues, pull requests, commits, and immutable snapshots.">
             New collection
           </SectionHeading>
+          {!account && (
+            <Alert variant="info" title="Optional account">
+              Sign in to attach runs, starred repositories, and contribution summaries to your workspace.
+            </Alert>
+          )}
 
           <form className="sync-form" onSubmit={handleSync}>
             <div className="repo-fields">
@@ -250,12 +403,56 @@ export default function App() {
                   </div>
                 </div>
 
-                <Caption>Last collected {formatDate(repository.collectedAt)}</Caption>
+                <div className="repository-actions">
+                  <Caption>Last collected {formatDate(repository.collectedAt)}</Caption>
+                  <Button
+                    size="sm"
+                    variant={repository.isStarred ? 'primary' : 'secondary'}
+                    onClick={() => handleToggleStar(repository)}
+                  >
+                    {repository.isStarred ? 'Starred' : 'Star'}
+                  </Button>
+                </div>
               </Card>
             ))}
           </div>
         )}
       </section>
+
+      {account && (
+        <section className="repository-section">
+          <SectionHeading subtitle="Summaries are calculated from synced artifacts that match your saved GitHub token login.">
+            Contribution profile
+          </SectionHeading>
+
+          {contributions.length === 0 ? (
+            <Card>
+              <EmptyState
+                title="No matching contributions yet"
+                body="Save a GitHub token, sync a repository you contribute to, and this section will populate."
+              />
+            </Card>
+          ) : (
+            <div className="contribution-list">
+              {contributions.map((contribution) => (
+                <Card className="contribution-card" key={contribution.id}>
+                  <div>
+                    <Link href={contribution.repository.htmlUrl} external>
+                      {contribution.repository.fullName}
+                    </Link>
+                    <Caption>{contribution.githubLogin}</Caption>
+                  </div>
+                  <div className="contribution-counts">
+                    <span>{contribution.commitsCount} commits</span>
+                    <span>{contribution.issuesCount} issues</span>
+                    <span>{contribution.pullsCount} PRs</span>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }
