@@ -15,7 +15,6 @@ export const Checkbox: React.FC<CheckboxProps> = ({
   disabled,
   className,
   id,
-  ref: _ref, // strip ref from props
   ...props
 }) => {
   const autoId = useId();

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useId } from 'react';
+import React, { useState, useCallback } from 'react';
 import '../styles/feedback.css';
 
 // ─── Alert (inline) ───────────────────────────────────────

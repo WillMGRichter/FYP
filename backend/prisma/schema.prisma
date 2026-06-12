@@ -11,3 +11,129 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum GitHubEntityType {
+  REPOSITORY
+  ISSUE
+  PULL_REQUEST
+  COMMIT
+}
+
+enum CollectionStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model GitHubToken {
+  id             String          @id @default(cuid())
+  label          String
+  githubLogin    String?
+  githubUserId   BigInt?
+  encryptedToken String
+  tokenPreview   String
+  scopes         String[]
+  rateLimit      Int?
+  rateRemaining  Int?
+  rateResetAt    DateTime?
+  lastValidatedAt DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  collectionRuns CollectionRun[]
+
+  @@index([githubLogin])
+}
+
+model Repository {
+  id               String           @id @default(cuid())
+  githubId         BigInt           @unique
+  owner            String
+  name             String
+  fullName         String           @unique
+  htmlUrl          String
+  description      String?
+  defaultBranch    String?
+  isPrivate        Boolean          @default(false)
+  isFork           Boolean          @default(false)
+  language         String?
+  stars            Int              @default(0)
+  forks            Int              @default(0)
+  openIssues       Int              @default(0)
+  pushedAt         DateTime?
+  githubCreatedAt  DateTime?
+  githubUpdatedAt  DateTime?
+  collectedAt      DateTime         @default(now())
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  artifacts        RepositoryArtifact[]
+  snapshots        EntitySnapshot[]
+  collectionRuns   CollectionRun[]
+
+  @@index([owner, name])
+  @@index([language])
+}
+
+model RepositoryArtifact {
+  id              String           @id @default(cuid())
+  repositoryId    String
+  type            GitHubEntityType
+  githubNodeId    String?
+  githubNumber    Int?
+  githubSha       String?
+  title           String?
+  state           String?
+  authorLogin     String?
+  htmlUrl         String?
+  mergedAt        DateTime?
+  closedAt        DateTime?
+  githubCreatedAt DateTime?
+  githubUpdatedAt DateTime?
+  collectedAt     DateTime         @default(now())
+  repository      Repository       @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  snapshots       EntitySnapshot[]
+
+  @@unique([repositoryId, type, githubNodeId])
+  @@index([repositoryId, type])
+  @@index([authorLogin])
+}
+
+model EntitySnapshot {
+  id              String              @id @default(cuid())
+  repositoryId    String
+  artifactId      String?
+  entityType      GitHubEntityType
+  source          String
+  payload         Json
+  payloadHash     String
+  capturedAt      DateTime            @default(now())
+  collectionRunId String?
+  repository      Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  artifact        RepositoryArtifact? @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  collectionRun   CollectionRun?      @relation(fields: [collectionRunId], references: [id], onDelete: SetNull)
+
+  @@unique([repositoryId, artifactId, entityType, payloadHash])
+  @@index([repositoryId, entityType])
+  @@index([capturedAt])
+}
+
+model CollectionRun {
+  id            String           @id @default(cuid())
+  repositoryId  String?
+  tokenId       String?
+  status        CollectionStatus @default(PENDING)
+  source        String           @default("github_api")
+  requestedBy   String?
+  startedAt     DateTime         @default(now())
+  completedAt   DateTime?
+  errorMessage  String?
+  issuesCount   Int              @default(0)
+  pullsCount    Int              @default(0)
+  commitsCount  Int              @default(0)
+  repository    Repository?      @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
+  token         GitHubToken?     @relation(fields: [tokenId], references: [id], onDelete: SetNull)
+  snapshots     EntitySnapshot[]
+
+  @@index([status])
+  @@index([startedAt])
+}

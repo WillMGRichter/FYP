@@ -151,6 +151,44 @@
   }
 }
 
+[data-theme="light"] {
+  --bg-page:       var(--color-gray-50);
+  --bg-surface:    var(--color-white);
+  --bg-sunken:     var(--color-gray-100);
+  --bg-hover:      var(--color-gray-100);
+  --bg-active:     var(--color-gray-200);
+
+  --text-primary:   var(--color-gray-900);
+  --text-secondary: var(--color-gray-600);
+  --text-muted:     var(--color-gray-400);
+  --text-link:      var(--color-blue-600);
+  --text-on-dark:   var(--color-white);
+
+  --border-subtle:   var(--color-gray-200);
+  --border-default:  var(--color-gray-300);
+  --border-strong:   var(--color-gray-400);
+  --border-focus:    var(--color-blue-400);
+}
+
+[data-theme="dark"] {
+  --bg-page:       #111110;
+  --bg-surface:    #1a1a18;
+  --bg-sunken:     #111110;
+  --bg-hover:      #222220;
+  --bg-active:     #2a2a28;
+
+  --text-primary:   #f0eeea;
+  --text-secondary: #9e9c95;
+  --text-muted:     #5a5854;
+  --text-link:      var(--color-blue-200);
+  --text-on-dark:   var(--color-white);
+
+  --border-subtle:  #2a2927;
+  --border-default: #3f3e3b;
+  --border-strong:  #5a5854;
+  --border-focus:   var(--color-blue-400);
+}
+
 /* --- Global Reset --- */
 *, *::before, *::after {
   box-sizing: border-box;
