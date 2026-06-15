@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitHub Research Collector</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: #ffffff;
+      width: 500px;
+      min-height: 600px;
+      color: #333;
+    }
+
+    #root {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 16px;
+      text-align: center;
+      border-bottom: 1px solid #e1e4e8;
+    }
+
+    header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    header p {
+      font-size: 12px;
+      opacity: 0.9;
+    }
+
+    main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    .section {
+      margin-bottom: 24px;
+    }
+
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #24292e;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #e1e4e8;
+      padding-bottom: 8px;
+    }
+
+    .card {
+      background: #f6f8fa;
+      border: 1px solid #e1e4e8;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 8px;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    button {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid #e1e4e8;
+      border-radius: 6px;
+      background: white;
+      color: #24292e;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    button:hover {
+      background: #f6f8fa;
+      border-color: #d1d5da;
+    }
+
+    button.primary {
+      background: #667eea;
+      color: white;
+      border-color: #667eea;
+    }
+
+    button.primary:hover {
+      background: #5568d3;
+      border-color: #5568d3;
+    }
+
+    button.danger {
+      background: #cb2431;
+      color: white;
+      border-color: #cb2431;
+    }
+
+    button.danger:hover {
+      background: #b91c1c;
+      border-color: #b91c1c;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    input, textarea {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #e1e4e8;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: inherit;
+      margin-bottom: 8px;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 60px;
+    }
+
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .status {
+      font-size: 12px;
+      padding: 8px;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      display: none;
+    }
+
+    .status.show {
+      display: block;
+    }
+
+    .status.success {
+      background: #28a745;
+      color: white;
+    }
+
+    .status.error {
+      background: #cb2431;
+      color: white;
+    }
+
+    .status.info {
+      background: #0366d6;
+      color: white;
+    }
+
+    .data-preview {
+      background: #f6f8fa;
+      border: 1px solid #e1e4e8;
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 11px;
+      font-family: 'Courier New', monospace;
+      max-height: 200px;
+      overflow-y: auto;
+      margin-bottom: 8px;
+    }
+
+    .collection-run {
+      background: #f6f8fa;
+      border: 1px solid #e1e4e8;
+      border-radius: 6px;
+      padding: 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+
+    .run-status {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 500;
+      margin-right: 8px;
+    }
+
+    .run-status.pending {
+      background: #ffc107;
+      color: #333;
+    }
+
+    .run-status.submitted {
+      background: #28a745;
+      color: white;
+    }
+
+    .run-status.failed {
+      background: #cb2431;
+      color: white;
+    }
+
+    .run-timestamp {
+      font-size: 11px;
+      color: #6a737d;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      font-size: 12px;
+      cursor: pointer;
+      margin-bottom: 8px;
+    }
+
+    .checkbox-label input {
+      width: auto;
+      margin-right: 6px;
+      margin-bottom: 0;
+    }
+
+    .error-details {
+      background: #fff5f5;
+      color: #cb2431;
+      border: 1px solid #f85149;
+      padding: 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      margin-top: 4px;
+      word-break: break-word;
+    }
+
+    .loading {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid #e1e4e8;
+      border-top-color: #667eea;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/popup/main.tsx"></script>
+</body>
+</html>
