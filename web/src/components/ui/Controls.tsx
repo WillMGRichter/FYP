@@ -1,7 +1,7 @@
 import React, { useId } from 'react';
 import '../styles/controls.css';
 
-// ─── Checkbox ─────────────────────────────────────────────
+/** Checkbox input with optional label and helper text. */
 interface CheckboxProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'> {
   label?: string;
   helper?: string;
@@ -61,7 +61,7 @@ export const Checkbox: React.FC<CheckboxProps> = ({
   );
 };
 
-// ─── Radio ────────────────────────────────────────────────
+/** Radio input with optional label and helper text. */
 interface RadioProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'> {
   label?: string;
   helper?: string;
@@ -110,7 +110,7 @@ export const Radio: React.FC<RadioProps> = ({
   );
 };
 
-// ─── Radio Group ──────────────────────────────────────────
+/** Group of radio inputs with a shared name and legend. */
 interface RadioOption {
   value: string;
   label: string;
@@ -159,7 +159,7 @@ export const RadioGroup: React.FC<RadioGroupProps> = ({
   </fieldset>
 );
 
-// ─── Toggle ───────────────────────────────────────────────
+/** Toggle switch input with optional label and helper text. */
 interface ToggleProps {
   checked?: boolean;
   onChange?: (checked: boolean) => void;

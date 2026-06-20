@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import '../styles/dropdown.css';
 
-// ─── Types ────────────────────────────────────────────────
+/** A selectable item in the dropdown menu. */
 export interface DropdownItem {
   key: string;
   label: string;
@@ -12,6 +12,7 @@ export interface DropdownItem {
   sectionLabel?: never;
 }
 
+/** A visual separator line in the dropdown. */
 export interface DropdownSeparator {
   key: string;
   separator: true;
@@ -22,6 +23,7 @@ export interface DropdownSeparator {
   sectionLabel?: never;
 }
 
+/** A non-interactive section header in the dropdown. */
 export interface DropdownSectionLabel {
   key: string;
   sectionLabel: string;
@@ -34,7 +36,6 @@ export interface DropdownSectionLabel {
 
 export type DropdownEntry = DropdownItem | DropdownSeparator | DropdownSectionLabel;
 
-// ─── Dropdown ─────────────────────────────────────────────
 interface DropdownProps {
   trigger: React.ReactNode;
   items: DropdownEntry[];
@@ -55,7 +56,6 @@ export const Dropdown: React.FC<DropdownProps> = ({
 
   const close = useCallback(() => setOpen(false), []);
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -67,7 +67,6 @@ export const Dropdown: React.FC<DropdownProps> = ({
     return () => document.removeEventListener('mousedown', handler);
   }, [open, close]);
 
-  // Close on Escape
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
@@ -82,12 +81,11 @@ export const Dropdown: React.FC<DropdownProps> = ({
 
   return (
     <div className={`dropdown-root ${className ?? ''}`} ref={rootRef}>
-      {/* Trigger */}
       <div onClick={() => setOpen((v) => !v)} style={{ display: 'inline-flex' }}>
         {trigger}
       </div>
 
-      {/* Menu */}
+
       {open && (
         <div
           className={`dropdown-menu ${align === 'right' ? 'dropdown-menu-right' : ''}`}

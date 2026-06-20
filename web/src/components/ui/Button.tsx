@@ -49,7 +49,7 @@ export const Button: React.FC<ButtonProps> = ({
   );
 };
 
-// ─── Icon Button convenience wrapper ──────────────────────
+/** Icon button convenience wrapper. Automatically sets iconOnly and requires an accessible label. */
 interface IconButtonProps extends Omit<ButtonProps, 'iconOnly' | 'children'> {
   icon: React.ReactNode;
   label: string; // required for accessibility
@@ -61,7 +61,7 @@ export const IconButton: React.FC<IconButtonProps> = ({ icon, label, ...props })
   </Button>
 );
 
-// ─── Button Group ─────────────────────────────────────────
+/** Button group container for horizontally aligned buttons. */
 interface ButtonGroupProps {
   children: React.ReactNode;
   className?: string;

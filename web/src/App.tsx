@@ -11,6 +11,11 @@ import { Caption, Link, PageTitle, SectionHeading, Text } from './components/ui/
 import { api, sessionStore } from './lib/api';
 import type { Account, CollectionRun, Contribution, GitHubToken, Repository } from './lib/api';
 
+/**
+ * Format an ISO date string for display.
+ * @param value - ISO date string or null
+ * @returns Human-readable date string
+ */
 const formatDate = (value?: string | null) =>
   value
     ? new Intl.DateTimeFormat(undefined, {
@@ -19,12 +24,19 @@ const formatDate = (value?: string | null) =>
       }).format(new Date(value))
     : 'Not collected yet';
 
+/**
+ * Map a collection run status to a badge variant.
+ */
 const statusVariant = (status: CollectionRun['status']) => {
   if (status === 'COMPLETED') return 'open';
   if (status === 'FAILED') return 'closed';
   return 'progress';
 };
 
+/**
+ * Main dashboard page showing account status, statistics, collection activity,
+ * stored repositories, and contribution summaries.
+ */
 export default function App() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [runs, setRuns] = useState<CollectionRun[]>([]);

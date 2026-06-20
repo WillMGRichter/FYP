@@ -99,8 +99,19 @@ type AuthAccount = {
   displayName: string;
 };
 
+/**
+ * Parse an optional ISO date string into a Date or null.
+ * @param value - ISO date string or null
+ * @returns Date object or null
+ */
 const parseDate = (value?: string | null) => (value ? new Date(value) : null);
 
+/**
+ * Serialise a value to JSON, converting BigInt values to strings.
+ * Required because JSON.stringify does not support BigInt.
+ * @param value - The value to serialise
+ * @returns JSON-safe object
+ */
 const jsonForResponse = (value: unknown) =>
   JSON.parse(
     JSON.stringify(value, (_key, nestedValue) =>
@@ -108,6 +119,11 @@ const jsonForResponse = (value: unknown) =>
     ),
   );
 
+/**
+ * Derive a 256-bit AES key from the GITHUB_TOKEN_SECRET environment variable.
+ * Falls back to DATABASE_URL or a development-only constant.
+ * @returns 32-byte Buffer suitable for AES-256-GCM
+ */
 const tokenSecret = () => {
   const raw =
     process.env.GITHUB_TOKEN_SECRET ??
@@ -116,6 +132,12 @@ const tokenSecret = () => {
   return crypto.createHash('sha256').update(raw).digest();
 };
 
+/**
+ * Encrypt a GitHub token using AES-256-GCM.
+ * Output format: base64(iv).base64(authTag).base64(ciphertext)
+ * @param token - Plaintext token to encrypt
+ * @returns Encrypted token string
+ */
 const encryptToken = (token: string) => {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', tokenSecret(), iv);
@@ -124,6 +146,11 @@ const encryptToken = (token: string) => {
   return `${iv.toString('base64')}.${authTag.toString('base64')}.${encrypted.toString('base64')}`;
 };
 
+/**
+ * Decrypt a token previously encrypted with encryptToken.
+ * @param encryptedToken - Token in base64(iv).base64(authTag).base64(ciphertext) format
+ * @returns Plaintext token
+ */
 const decryptToken = (encryptedToken: string) => {
   const [iv, authTag, encrypted] = encryptedToken.split('.').map((part) => Buffer.from(part, 'base64'));
   const decipher = crypto.createDecipheriv('aes-256-gcm', tokenSecret(), iv);
@@ -131,17 +158,36 @@ const decryptToken = (encryptedToken: string) => {
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
 };
 
+/**
+ * Compute a SHA-256 hash of a JSON-serialisable payload for deduplication.
+ */
 const payloadHash = (payload: unknown) =>
   crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 
+/**
+ * Compute a SHA-256 hash of a session token for secure storage.
+ */
 const sessionTokenHash = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
 
+/**
+ * Hash a password using PBKDF2 with SHA-256 and a random salt.
+ * Output format: pbkdf2_sha256$iterations$salt$hash
+ * @param password - Plaintext password
+ * @returns Storable hash string
+ */
 const passwordHash = (password: string) => {
   const salt = crypto.randomBytes(16).toString('base64');
   const hash = crypto.pbkdf2Sync(password, salt, 120000, 32, 'sha256').toString('base64');
   return `pbkdf2_sha256$120000$${salt}$${hash}`;
 };
 
+/**
+ * Verify a password against a stored PBKDF2 hash.
+ * Uses timing-safe comparison to prevent timing attacks.
+ * @param password - Plaintext password to verify
+ * @param storedHash - Hash in pbkdf2_sha256$iterations$salt$hash format
+ * @returns True if the password matches
+ */
 const verifyPassword = (password: string, storedHash: string) => {
   const [algorithm, iterationsText, salt, hash] = storedHash.split('$');
   if (algorithm !== 'pbkdf2_sha256' || !iterationsText || !salt || !hash) return false;
@@ -152,12 +198,21 @@ const verifyPassword = (password: string, storedHash: string) => {
   return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(candidate));
 };
 
+/**
+ * Strip sensitive fields (e.g. passwordHash) from an account object.
+ */
 const publicAccount = (account: AuthAccount) => ({
   id: account.id,
   email: account.email,
   displayName: account.displayName,
 });
 
+/**
+ * Create a new session for the given account.
+ * The session token is returned in plaintext; only its hash is stored.
+ * @param accountId - ID of the account
+ * @returns Object containing the plaintext token and expiration date
+ */
 async function createSession(accountId: string) {
   const token = crypto.randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
@@ -173,6 +228,11 @@ async function createSession(accountId: string) {
   return { token, expiresAt };
 }
 
+/**
+ * Resolve the account from the request's Bearer token, if present and valid.
+ * @param request - Fastify request object
+ * @returns The public account object, or null if not authenticated
+ */
 async function getOptionalAccount(request: { headers: { authorization?: string } }) {
   const authorization = request.headers.authorization;
   const token = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : undefined;
@@ -188,6 +248,12 @@ async function getOptionalAccount(request: { headers: { authorization?: string }
   return publicAccount(session.account);
 }
 
+/**
+ * Require a valid session. Sends 401 and returns null if not authenticated.
+ * @param request - Fastify request object
+ * @param reply - Fastify reply object
+ * @returns The public account object, or null (and a 401 response) if not authenticated
+ */
 async function requireAccount(request: { headers: { authorization?: string } }, reply: { code: (status: number) => { send: (payload: unknown) => unknown } }) {
   const account = await getOptionalAccount(request);
   if (!account) {
@@ -198,6 +264,10 @@ async function requireAccount(request: { headers: { authorization?: string } }, 
   return account;
 }
 
+/**
+ * Upsert contribution counts for an account on a repository.
+ * Only updates if the account's GitHub login matches any artifact authors.
+ */
 async function refreshContributions(input: {
   accountId: string;
   repositoryId: string;
@@ -240,6 +310,12 @@ async function refreshContributions(input: {
   });
 }
 
+/**
+ * Make an authenticated request to the GitHub REST API.
+ * @param path - API path (e.g. /repos/owner/name)
+ * @param token - Optional Bearer token for authenticated requests
+ * @returns Parsed response data and the raw Response object
+ */
 async function githubFetch<T>(path: string, token?: string): Promise<{ data: T; response: Response }> {
   const response = await fetch(`${GITHUB_API}${path}`, {
     headers: {
@@ -258,6 +334,12 @@ async function githubFetch<T>(path: string, token?: string): Promise<{ data: T; 
   return { data, response };
 }
 
+/**
+ * Retrieve and decrypt a GitHub token by ID, optionally scoped to an account.
+ * @param tokenId - ID of the token record
+ * @param accountId - Optional account ID for access scoping
+ * @returns Decrypted token record, or undefined if no tokenId given
+ */
 async function getToken(tokenId?: string, accountId?: string) {
   if (!tokenId) return undefined;
 
@@ -277,6 +359,10 @@ async function getToken(tokenId?: string, accountId?: string) {
   };
 }
 
+/**
+ * Create or update an entity snapshot.
+ * Uses payload hash for deduplication to avoid storing identical snapshots.
+ */
 async function createSnapshot(input: {
   repositoryId: string;
   artifactId?: string;
@@ -319,6 +405,7 @@ async function createSnapshot(input: {
   });
 }
 
+/** CORS preflight and header injection hook for all routes. */
 app.addHook('onRequest', async (request, reply) => {
   const origin = request.headers.origin;
   if (origin) {
@@ -340,6 +427,7 @@ app.get(`${API_PREFIX}/health`, async () => ({
   service: 'github-research-backend',
 }));
 
+/** Register a new account and return a session. */
 app.post<{ Body: AccountPayload }>(`${API_PREFIX}/auth/register`, async (request, reply) => {
   const email = request.body.email?.trim().toLowerCase();
   const displayName = request.body.displayName?.trim();
@@ -366,6 +454,7 @@ app.post<{ Body: AccountPayload }>(`${API_PREFIX}/auth/register`, async (request
   return reply.code(201).send(jsonForResponse({ account: publicAccount(account), session }));
 });
 
+/** Authenticate with email and password, returning a session. */
 app.post<{ Body: LoginPayload }>(`${API_PREFIX}/auth/login`, async (request, reply) => {
   const email = request.body.email?.trim().toLowerCase();
   const password = request.body.password ?? '';
@@ -383,11 +472,13 @@ app.post<{ Body: LoginPayload }>(`${API_PREFIX}/auth/login`, async (request, rep
   return jsonForResponse({ account: publicAccount(account), session });
 });
 
+/** Return the currently authenticated account, or null. */
 app.get(`${API_PREFIX}/auth/me`, async (request) => {
   const account = await getOptionalAccount(request);
   return { account };
 });
 
+/** Invalidate the current session. */
 app.post(`${API_PREFIX}/auth/logout`, async (request) => {
   const authorization = request.headers.authorization;
   const token = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : undefined;
@@ -397,6 +488,7 @@ app.post(`${API_PREFIX}/auth/logout`, async (request) => {
   return { ok: true };
 });
 
+/** List saved GitHub tokens for the current account. */
 app.get(`${API_PREFIX}/github/tokens`, async (request) => {
   const account = await getOptionalAccount(request);
   const tokens = await prisma.gitHubToken.findMany({
@@ -419,6 +511,7 @@ app.get(`${API_PREFIX}/github/tokens`, async (request) => {
   return jsonForResponse({ tokens });
 });
 
+/** Save and validate a new GitHub token. Validates against the GitHub /user endpoint. */
 app.post<{ Body: TokenPayload }>(`${API_PREFIX}/github/tokens`, async (request, reply) => {
   const account = await requireAccount(request, reply);
   if (!account) return;
@@ -468,6 +561,7 @@ app.post<{ Body: TokenPayload }>(`${API_PREFIX}/github/tokens`, async (request, 
   return reply.code(201).send(jsonForResponse({ token: saved }));
 });
 
+/** List all repositories in the snapshot store with counts and star status. */
 app.get(`${API_PREFIX}/repositories`, async (request) => {
   const account = await getOptionalAccount(request);
   const repositories = await prisma.repository.findMany({
@@ -502,6 +596,7 @@ app.get(`${API_PREFIX}/repositories`, async (request) => {
   });
 });
 
+/** List recent collection runs for the current account. */
 app.get(`${API_PREFIX}/collections`, async (request) => {
   const account = await getOptionalAccount(request);
   const runs = await prisma.collectionRun.findMany({
@@ -527,6 +622,10 @@ app.get(`${API_PREFIX}/collections`, async (request) => {
   return jsonForResponse({ runs });
 });
 
+/**
+ * Trigger a full collection run: fetches repository metadata, issues,
+ * pull requests, and commits from GitHub and persists them as snapshots.
+ */
 app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (request, reply) => {
   const account = await getOptionalAccount(request);
   const owner = request.body.owner?.trim();
@@ -793,6 +892,7 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
   }
 });
 
+/** Star a repository for the current account with an optional note. */
 app.post<{ Params: { id: string }; Body: { note?: string } }>(`${API_PREFIX}/repositories/:id/star`, async (request, reply) => {
   const account = await requireAccount(request, reply);
   if (!account) return;
@@ -822,6 +922,7 @@ app.post<{ Params: { id: string }; Body: { note?: string } }>(`${API_PREFIX}/rep
   return jsonForResponse({ star });
 });
 
+/** Remove a star from a repository. */
 app.delete<{ Params: { id: string } }>(`${API_PREFIX}/repositories/:id/star`, async (request, reply) => {
   const account = await requireAccount(request, reply);
   if (!account) return;
@@ -836,6 +937,7 @@ app.delete<{ Params: { id: string } }>(`${API_PREFIX}/repositories/:id/star`, as
   return { ok: true };
 });
 
+/** List contribution summaries for the current account. */
 app.get(`${API_PREFIX}/account/contributions`, async (request, reply) => {
   const account = await requireAccount(request, reply);
   if (!account) return;
@@ -857,6 +959,7 @@ app.get(`${API_PREFIX}/account/contributions`, async (request, reply) => {
   return jsonForResponse({ contributions });
 });
 
+/** Receive a snapshot from the browser extension and persist it. */
 app.post<{ Body: ExtensionSnapshotPayload }>(`${API_PREFIX}/extension/snapshots`, async (request, reply) => {
   const { repositoryFullName, entityType, payload } = request.body;
 

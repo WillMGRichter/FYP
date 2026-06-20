@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import '../styles/layout.css';
 
-// ─── Navbar ───────────────────────────────────────────────
+/** Top navigation bar with brand, links, and an optional end slot. */
 interface NavItem {
   key: string;
   label: string;
@@ -68,7 +68,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   </nav>
 );
 
-// ─── Page Header ──────────────────────────────────────────
+/** Page-level header with title, optional subtitle, and action slot. */
 interface PageHeaderProps {
   title: string;
   subtitle?: string;
@@ -86,7 +86,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({ title, subtitle, actions
   </header>
 );
 
-// ─── Tabs ─────────────────────────────────────────────────
+/** Tab bar for switching between sections. */
 interface TabItem {
   key: string;
   label: string;
@@ -123,7 +123,7 @@ export const Tabs: React.FC<TabsProps> = ({ items, activeKey, onChange, classNam
   </div>
 );
 
-// ─── Card ─────────────────────────────────────────────────
+/** Card container with optional small variant. */
 interface CardProps {
   children: React.ReactNode;
   small?: boolean;
@@ -137,7 +137,7 @@ export const Card: React.FC<CardProps> = ({ children, small = false, className, 
   </div>
 );
 
-// ─── Tabs with content panel (controlled) ─────────────────
+/** Content panel controlled by a Tabs component. Only renders when active. */
 interface TabPanelProps {
   id: string;
   activeKey: string;
@@ -155,7 +155,7 @@ export const TabPanel: React.FC<TabPanelProps> = ({ id, activeKey, children }) =
   </div>
 );
 
-// ─── useTabs hook ─────────────────────────────────────────
+/** Hook for managing tab selection state. */
 export function useTabs(defaultKey: string) {
   const [activeKey, setActiveKey] = useState(defaultKey);
   return { activeKey, onChange: setActiveKey };

@@ -2,6 +2,10 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Navbar } from '../components/ui/Layout';
 import { Button } from '../components/ui/Button';
 
+/**
+ * Root layout component providing the navbar shell and
+ * routing via React Router Outlet.
+ */
 export default function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
