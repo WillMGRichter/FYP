@@ -1,7 +1,7 @@
 import React from 'react';
 import '../styles/badge.css';
 
-// ─── Status Badge (with dot) ──────────────────────────────
+/** Status badge with a coloured dot indicator. */
 export type StatusVariant = 'open' | 'closed' | 'merged' | 'draft' | 'progress';
 
 const STATUS_LABELS: Record<StatusVariant, string> = {
@@ -25,7 +25,7 @@ export const Badge: React.FC<BadgeProps> = ({ status, label, className }) => (
   </span>
 );
 
-// ─── Tag (category label) ─────────────────────────────────
+/** Category tag label (e.g. bug, feature, docs). */
 export type TagVariant = 'bug' | 'feature' | 'docs' | 'perf' | 'refactor' | 'default';
 
 interface TagProps {

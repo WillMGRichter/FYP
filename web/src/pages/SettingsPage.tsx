@@ -10,9 +10,17 @@ import { api } from '../lib/api';
 import type { Account, GitHubToken } from '../lib/api';
 import './SettingsPage.css';
 
+/**
+ * Format an ISO date string for display.
+ * @param value - ISO date string or null
+ * @returns Human-readable date string
+ */
 const formatDate = (value?: string | null) =>
   value ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : 'Never';
 
+/**
+ * Settings page for managing GitHub API tokens and local preferences.
+ */
 export default function SettingsPage() {
   const [darkMode, setDarkMode] = useState(false);
   const [tokens, setTokens] = useState<GitHubToken[]>([]);

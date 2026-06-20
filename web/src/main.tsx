@@ -1,3 +1,8 @@
+/**
+ * Application entry point.
+ * Sets up React Router with the root layout, dashboard, settings, and component showcase routes.
+ */
+
 import './index.css'
 import ComponentShowcase  from './pages/ComponentShowcase.tsx'
 import App from './App.tsx'

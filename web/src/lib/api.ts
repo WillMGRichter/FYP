@@ -1,12 +1,18 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api';
 const SESSION_KEY = 'gitresearch_session_token';
 
+/**
+ * Authenticated account information returned by the backend.
+ */
 export type Account = {
   id: string;
   email: string;
   displayName: string;
 };
 
+/**
+ * A saved GitHub personal access token with its metadata.
+ */
 export type GitHubToken = {
   id: string;
   label: string;
@@ -20,6 +26,9 @@ export type GitHubToken = {
   createdAt?: string;
 };
 
+/**
+ * A repository synced from GitHub into the local snapshot store.
+ */
 export type Repository = {
   id: string;
   fullName: string;
@@ -46,6 +55,9 @@ export type Repository = {
   } | null;
 };
 
+/**
+ * A collection run that fetches issues, pull requests, and commits for a repository.
+ */
 export type CollectionRun = {
   id: string;
   status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
@@ -66,6 +78,9 @@ export type CollectionRun = {
   } | null;
 };
 
+/**
+ * A contributor summary computed from collected artifacts for a signed-in account.
+ */
 export type Contribution = {
   id: string;
   githubLogin: string;
@@ -80,6 +95,9 @@ export type Contribution = {
   };
 };
 
+/**
+ * Session token persistence layer using localStorage.
+ */
 export const sessionStore = {
   get() {
     return localStorage.getItem(SESSION_KEY);
@@ -94,6 +112,12 @@ export const sessionStore = {
   },
 };
 
+/**
+ * Core request helper that attaches session auth and parses JSON responses.
+ * @param path - API endpoint path (e.g. /auth/login)
+ * @param init - Optional fetch init overrides
+ * @returns Parsed response body cast to T
+ */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const sessionToken = sessionStore.get();
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -113,7 +137,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+/**
+ * Typed API client exposing all backend endpoints.
+ */
 export const api = {
+  /**
+   * Register a new account.
+   * @param input - Email, display name, and password
+   */
   async register(input: { email: string; displayName: string; password: string }) {
     return request<{ account: Account; session: { token: string; expiresAt: string } }>('/auth/register', {
       method: 'POST',
@@ -121,6 +152,10 @@ export const api = {
     });
   },
 
+  /**
+   * Sign in with email and password.
+   * @param input - Email and password
+   */
   async login(input: { email: string; password: string }) {
     return request<{ account: Account; session: { token: string; expiresAt: string } }>('/auth/login', {
       method: 'POST',
@@ -128,18 +163,25 @@ export const api = {
     });
   },
 
+  /** Fetch the currently authenticated account, or null. */
   async me() {
     return request<{ account: Account | null }>('/auth/me');
   },
 
+  /** Invalidate the current session on the backend. */
   async logout() {
     return request<{ ok: boolean }>('/auth/logout', { method: 'POST' });
   },
 
+  /** List all saved GitHub API tokens for the current account. */
   async listTokens() {
     return request<{ tokens: GitHubToken[] }>('/github/tokens');
   },
 
+  /**
+   * Save and validate a new GitHub API token.
+   * @param input - Label and raw token value
+   */
   async createToken(input: { label: string; token: string }) {
     return request<{ token: GitHubToken }>('/github/tokens', {
       method: 'POST',
@@ -147,14 +189,20 @@ export const api = {
     });
   },
 
+  /** List all repositories in the snapshot store. */
   async listRepositories() {
     return request<{ repositories: Repository[] }>('/repositories');
   },
 
+  /** List collection runs. */
   async listCollections() {
     return request<{ runs: CollectionRun[] }>('/collections');
   },
 
+  /**
+   * Trigger a collection run for a repository.
+   * @param input - Owner, name, and optional token ID
+   */
   async syncRepository(input: { owner: string; name: string; tokenId?: string }) {
     return request<{ run: CollectionRun }>('/repositories/sync', {
       method: 'POST',
@@ -162,6 +210,11 @@ export const api = {
     });
   },
 
+  /**
+   * Star a repository for the current account.
+   * @param id - Repository ID
+   * @param note - Optional annotation
+   */
   async starRepository(id: string, note?: string) {
     return request<{ star: Repository['star'] }>(`/repositories/${id}/star`, {
       method: 'POST',
@@ -169,12 +222,17 @@ export const api = {
     });
   },
 
+  /**
+   * Remove a star from a repository.
+   * @param id - Repository ID
+   */
   async unstarRepository(id: string) {
     return request<{ ok: boolean }>(`/repositories/${id}/star`, {
       method: 'DELETE',
     });
   },
 
+  /** List contribution summaries for the current account. */
   async listContributions() {
     return request<{ contributions: Contribution[] }>('/account/contributions');
   },

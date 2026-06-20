@@ -1,6 +1,6 @@
 /**
- * Content Script
- * Runs on GitHub pages and coordinates data collection
+ * Content script injected into GitHub pages.
+ * Handles scrape and data submission requests from the extension popup.
  */
 
 import { scrapeCurrentPage, getRepositoryFullName } from '../utils/scrapers';
@@ -16,7 +16,6 @@ interface MessageToPopup {
   error?: string;
 }
 
-// Listen for messages from popup
 chrome.runtime.onMessage.addListener(
   (message: MessageFromPopup, sender, sendResponse: (response: MessageToPopup) => void) => {
     console.log('[Content Script] Received message:', message);
@@ -29,14 +28,15 @@ chrome.runtime.onMessage.addListener(
       handleGetStatus(sendResponse);
     }
 
-    // Return true to indicate we'll send response asynchronously
     return true;
   }
 );
 
+/**
+ * Scrape the current GitHub page and return extracted data.
+ */
 async function handleScrape(sendResponse: (response: MessageToPopup) => void) {
   try {
-    // Wait for page to be ready
     await waitForPageReady();
 
     const scrapedData = scrapeCurrentPage();
@@ -69,9 +69,11 @@ async function handleScrape(sendResponse: (response: MessageToPopup) => void) {
   }
 }
 
+/**
+ * Submit scraped data to the configured backend API.
+ */
 async function handleSubmitData(data: unknown, sendResponse: (response: MessageToPopup) => void) {
   try {
-    // Get backend URL and auth token from storage
     const { backendUrl, authToken } = await chrome.storage.sync.get(['backendUrl', 'authToken']);
 
     if (!backendUrl || !authToken) {
@@ -82,7 +84,6 @@ async function handleSubmitData(data: unknown, sendResponse: (response: MessageT
       return;
     }
 
-    // Prepare the payload
     const payload = data as Record<string, unknown>;
     const repositoryFullName = payload.repositoryFullName as string;
     const entityType = payload.pageType as string;
@@ -95,15 +96,13 @@ async function handleSubmitData(data: unknown, sendResponse: (response: MessageT
       return;
     }
 
-    // Extract entity-specific fields
     const entityData = payload.entityData as Record<string, unknown>;
-    let submitPayload: Record<string, unknown> = {
+    const submitPayload: Record<string, unknown> = {
       repositoryFullName,
       entityType,
       payload: entityData,
     };
 
-    // Add entity-specific IDs if available
     if (entityType !== 'REPOSITORY' && entityData) {
       if ('number' in entityData) {
         submitPayload.githubNumber = entityData.number;
@@ -113,7 +112,6 @@ async function handleSubmitData(data: unknown, sendResponse: (response: MessageT
       }
     }
 
-    // Send to backend
     const response = await fetch(`${backendUrl}/api/extension/snapshots`, {
       method: 'POST',
       headers: {
@@ -141,6 +139,9 @@ async function handleSubmitData(data: unknown, sendResponse: (response: MessageT
   }
 }
 
+/**
+ * Return current page status (URL, repository, configuration state).
+ */
 async function handleGetStatus(sendResponse: (response: MessageToPopup) => void) {
   try {
     const repoFullName = getRepositoryFullName();
@@ -176,8 +177,6 @@ async function waitForPageReady(maxAttempts = 30): Promise<void> {
   }
 }
 
-// Auto-scrape on page load (optional feature)
-// Uncomment to enable automatic scraping on every GitHub page
 /*
 window.addEventListener('load', async () => {
   const { autoScrapEnabled } = await chrome.storage.sync.get(['autoScrapEnabled']);

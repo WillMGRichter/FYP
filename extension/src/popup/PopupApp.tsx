@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from 'react';
 
+/**
+ * Configuration for the extension-backend connection.
+ */
 interface ExtensionConfig {
   backendUrl: string;
   authToken: string;
   autoSubmit: boolean;
 }
 
+/**
+ * Data scraped from a GitHub page.
+ */
 interface ScrapedData {
   pageType: string;
   repositoryFullName: string;
@@ -14,6 +20,9 @@ interface ScrapedData {
   timestamp: string;
 }
 
+/**
+ * A record of a collection run (scrape + optional submit).
+ */
 interface CollectionRun {
   id: string;
   timestamp: string;
@@ -22,6 +31,10 @@ interface CollectionRun {
   error?: string;
 }
 
+/**
+ * Main popup component for the browser extension.
+ * Provides tabs for data collection, settings, and history.
+ */
 export default function PopupApp() {
   const [config, setConfig] = useState<ExtensionConfig>({
     backendUrl: '',
@@ -36,12 +49,9 @@ export default function PopupApp() {
   const [collectionRuns, setCollectionRuns] = useState<CollectionRun[]>([]);
   const [showPreview, setShowPreview] = useState(false);
 
-  // Load config on mount
-  useEffect(() => {
-    loadConfig();
-    loadCollectionRuns();
-  }, []);
-
+  /**
+   * Load extension configuration from chrome storage.
+   */
   const loadConfig = async () => {
     try {
       chrome.runtime.sendMessage(
@@ -57,6 +67,9 @@ export default function PopupApp() {
     }
   };
 
+  /**
+   * Load collection run history from chrome storage.
+   */
   const loadCollectionRuns = async () => {
     try {
       chrome.runtime.sendMessage(
@@ -72,6 +85,14 @@ export default function PopupApp() {
     }
   };
 
+  useEffect(() => {
+    loadConfig();
+    loadCollectionRuns();
+  }, []);
+
+  /**
+   * Persist configuration to chrome storage.
+   */
   const saveConfig = async () => {
     try {
       setIsLoading(true);
@@ -89,6 +110,9 @@ export default function PopupApp() {
     }
   };
 
+  /**
+   * Trigger a scrape on the current GitHub page via the content script.
+   */
   const handleScrape = async () => {
     try {
       setIsLoading(true);
@@ -116,6 +140,9 @@ export default function PopupApp() {
     }
   };
 
+  /**
+   * Submit scraped data to the backend API.
+   */
   const handleSubmit = async () => {
     try {
       setIsLoading(true);
@@ -171,6 +198,9 @@ export default function PopupApp() {
     }
   };
 
+  /**
+   * Clear all collection run history.
+   */
   const handleClearHistory = async () => {
     if (confirm('Are you sure you want to clear all collection history?')) {
       chrome.runtime.sendMessage(
@@ -186,13 +216,11 @@ export default function PopupApp() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      {/* Header */}
       <header>
-        <h1>🔬 GitHub Data Collector</h1>
+        <h1>GitHub Data Collector</h1>
         <p>Hybrid API & Browser Extraction</p>
       </header>
 
-      {/* Tab Navigation */}
       <div style={{ display: 'flex', borderBottom: '1px solid #e1e4e8', background: '#f6f8fa' }}>
         {(['collect', 'settings', 'history'] as const).map((t) => (
           <button
@@ -271,14 +299,14 @@ export default function PopupApp() {
 
               <div className="button-group">
                 <button onClick={handleScrape} disabled={isLoading} className="primary">
-                  {isLoading ? <span className="loading" /> : '📸'} Scrape
+                  {isLoading ? <span className="loading" /> : null} Scrape
                 </button>
                 <button
                   onClick={handleSubmit}
                   disabled={isLoading || !scrapedData}
                   className="primary"
                 >
-                  {isLoading ? <span className="loading" /> : '📤'} Submit
+                  {isLoading ? <span className="loading" /> : null} Submit
                 </button>
               </div>
 
@@ -340,7 +368,7 @@ export default function PopupApp() {
               </label>
 
               <button onClick={saveConfig} disabled={isLoading} className="primary" style={{ width: '100%' }}>
-                {isLoading ? <span className="loading" /> : '💾'} Save Settings
+                {isLoading ? <span className="loading" /> : null} Save Settings
               </button>
 
               <div style={{ fontSize: '11px', color: '#666', marginTop: '12px', padding: '8px', background: '#f6f8fa', borderRadius: '6px' }}>
@@ -376,7 +404,7 @@ export default function PopupApp() {
                   ))}
 
                   <button onClick={handleClearHistory} className="danger" style={{ width: '100%', marginTop: '12px' }}>
-                    🗑️ Clear History
+                    Clear History
                   </button>
                 </>
               )}

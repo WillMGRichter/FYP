@@ -3,7 +3,7 @@ import '../styles/input.css';
 
 type FieldSize = 'sm' | 'md' | 'lg';
 
-// ─── Field Wrapper ────────────────────────────────────────
+/** Field wrapper providing label, helper text, and error display. */
 interface FieldProps {
   label?: string;
   required?: boolean;
@@ -41,7 +41,7 @@ export const Field: React.FC<FieldProps> = ({
   </div>
 );
 
-// ─── Text Input ───────────────────────────────────────────
+/** Text input with optional icon, label, and validation error display. */
 interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size'> {
   size?: FieldSize;
   label?: string;
@@ -115,7 +115,7 @@ export const Input: React.FC<InputProps> = ({
   );
 };
 
-// ─── Textarea ─────────────────────────────────────────────
+/** Textarea with optional label, helper, and error display. */
 interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
   helper?: string;
@@ -151,7 +151,7 @@ export const Textarea: React.FC<TextareaProps> = ({
   );
 };
 
-// ─── Select ───────────────────────────────────────────────
+/** Select dropdown with optional label, helper, and error display. */
 interface SelectOption {
   value: string;
   label: string;

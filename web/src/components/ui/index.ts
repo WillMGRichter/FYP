@@ -1,8 +1,5 @@
-// ─── UI Component Library — GitHub Research Tool ──────────
-// Import tokens.css once at your app root:
-//   import '@/styles/tokens.css'
+/** UI component library barrel export. Import tokens.css once at the app root. */
 
-// Typography
 export {
   PageTitle,
   SectionHeading,
@@ -13,22 +10,17 @@ export {
   Link,
 } from './Typography';
 
-// Button
 export { Button, IconButton, ButtonGroup } from './Button';
 export type { } from './Button';
 
-// Input / Form
 export { Input, Textarea, Select, Field } from './Input';
 
-// Badge / Tag
 export { Badge, Tag } from './Badge';
 export type { StatusVariant, TagVariant } from './Badge';
 
-// Dropdown
 export { Dropdown } from './Dropdown';
 export type { DropdownEntry, DropdownItem, DropdownSeparator, DropdownSectionLabel } from './Dropdown';
 
-// Layout / Navigation
 export {
   Navbar,
   PageHeader,
@@ -38,10 +30,8 @@ export {
   useTabs,
 } from './Layout';
 
-// Form Controls
 export { Checkbox, Radio, RadioGroup, Toggle } from './Controls';
 
-// Feedback
 export {
   Alert,
   ToastContainer,

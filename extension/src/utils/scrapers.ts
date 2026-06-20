@@ -1,6 +1,5 @@
 /**
- * DOM Scraper Utilities
- * Extract GitHub repository information from DOM
+ * DOM scraper utilities for extracting GitHub entity data from the page DOM.
  */
 
 export type GitHubEntityType = 'REPOSITORY' | 'ISSUE' | 'PULL_REQUEST' | 'COMMIT';
@@ -49,7 +48,8 @@ export interface ScrapedCommit {
 }
 
 /**
- * Extract repository information from the current GitHub page
+ * Extract repository information from the current GitHub repository page.
+ * @returns Parsed repository data, or null if the URL does not match a repository path.
  */
 export function scrapeRepository(): ScrapedRepository | null {
   const match = window.location.pathname.match(/^\/([^/]+)\/([^/]+)/);
@@ -58,12 +58,9 @@ export function scrapeRepository(): ScrapedRepository | null {
   const [, owner, name] = match;
   const fullName = `${owner}/${name}`;
 
-  // Try to extract from page data
-  const title = document.querySelector('h1')?.textContent?.trim() || '';
   const description = document.querySelector('[data-filterable-for="filter-projects-text"]')?.textContent?.trim() ||
     document.querySelector('p[class*="description"]')?.textContent?.trim() || '';
 
-  // Extract stats from the sidebar
   const stats: Record<string, number> = {};
   document.querySelectorAll('[id^="repo-"] a[href*="/stargazers"], [id^="repo-"] a[href*="/network/members"]').forEach((link) => {
     const text = link.textContent?.trim() || '';
@@ -74,13 +71,9 @@ export function scrapeRepository(): ScrapedRepository | null {
     }
   });
 
-  // Extract language
   const languageElement = document.querySelector('[itemprop="programmingLanguage"]');
   const language = languageElement?.textContent?.trim();
 
-  // Check if private/fork
-  const repoHeader = document.querySelector('[data-testid="repository-details-header"]') ||
-    document.querySelector('h1[class*="Box-title"]');
   const isPrivate = document.body.innerHTML.includes('private') && document.body.innerHTML.includes('visibility');
   const isFork = document.querySelector('span:has-text("forked from")') !== null;
 
@@ -98,7 +91,8 @@ export function scrapeRepository(): ScrapedRepository | null {
 }
 
 /**
- * Extract issue information from issue page
+ * Extract issue information from a GitHub issue page.
+ * @returns Parsed issue data, or null if the URL does not match an issue path.
  */
 export function scrapeIssue(): ScrapedIssue | null {
   const match = window.location.pathname.match(/^\/([^/]+)\/([^/]+)\/issues\/(\d+)/);
@@ -151,7 +145,8 @@ export function scrapeIssue(): ScrapedIssue | null {
 }
 
 /**
- * Extract pull request information from PR page
+ * Extract pull request information from a GitHub pull request page.
+ * @returns Parsed pull request data, or null if the URL is not a PR path.
  */
 export function scrapePullRequest(): ScrapedPullRequest | null {
   const match = window.location.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
@@ -199,7 +194,8 @@ export function scrapePullRequest(): ScrapedPullRequest | null {
 }
 
 /**
- * Extract commit information from commit page
+ * Extract commit information from a GitHub commit page.
+ * @returns Parsed commit data, or null if the URL is not a commit path.
  */
 export function scrapeCommit(): ScrapedCommit | null {
   const match = window.location.pathname.match(/^\/([^/]+)\/([^/]+)\/commit\/([a-f0-9]+)/);
@@ -235,7 +231,8 @@ export function scrapeCommit(): ScrapedCommit | null {
 }
 
 /**
- * Extract list of issues from issues page
+ * Extract a list of issues from a GitHub issues listing page.
+ * @returns Array of parsed issues (without body content).
  */
 export function scrapeIssuesList(): Array<Omit<ScrapedIssue, 'body'>> {
   const issues: Array<Omit<ScrapedIssue, 'body'>> = [];
@@ -274,7 +271,8 @@ export function scrapeIssuesList(): Array<Omit<ScrapedIssue, 'body'>> {
 }
 
 /**
- * Extract list of pull requests from pull requests page
+ * Extract a list of pull requests from a GitHub pull requests listing page.
+ * @returns Array of parsed pull requests (without body content).
  */
 export function scrapePullRequestsList(): Array<Omit<ScrapedPullRequest, 'body'>> {
   const prs: Array<Omit<ScrapedPullRequest, 'body'>> = [];
@@ -310,7 +308,8 @@ export function scrapePullRequestsList(): Array<Omit<ScrapedPullRequest, 'body'>
 }
 
 /**
- * Extract list of commits from commits page
+ * Extract a list of commits from a GitHub commits listing page.
+ * @returns Array of parsed commits.
  */
 export function scrapeCommitsList(): ScrapedCommit[] {
   const commits: ScrapedCommit[] = [];
@@ -342,7 +341,8 @@ export function scrapeCommitsList(): ScrapedCommit[] {
 }
 
 /**
- * Determine what type of page we're on
+ * Determine the GitHub entity type of the current page based on the URL path.
+ * @returns The entity type, or null if the page is not a recognised entity page.
  */
 export function getCurrentPageType(): GitHubEntityType | null {
   const pathname = window.location.pathname;
@@ -356,7 +356,8 @@ export function getCurrentPageType(): GitHubEntityType | null {
 }
 
 /**
- * Get repository full name from current URL
+ * Extract the repository full name (owner/name) from the current URL.
+ * @returns The full name, or null if the URL does not match a repository path.
  */
 export function getRepositoryFullName(): string | null {
   const match = window.location.pathname.match(/^\/([^/]+)\/([^/]+)/);
@@ -365,7 +366,8 @@ export function getRepositoryFullName(): string | null {
 }
 
 /**
- * Scrape appropriate data based on current page type
+ * Scrape the current GitHub page using the appropriate scraper for the detected page type.
+ * @returns An object with type and data properties, or null if the page type is not recognised.
  */
 export function scrapeCurrentPage() {
   const pageType = getCurrentPageType();

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-// ─── Import all components ────────────────────────────────
+
 import {
   PageTitle,
   SectionHeading,
@@ -18,7 +18,7 @@ import { Navbar, PageHeader, Tabs, TabPanel, Card, useTabs } from '../components
 import { Checkbox, RadioGroup, Toggle } from '../components/ui/Controls';
 import { Alert, ToastContainer, EmptyState, Spinner, useToast } from '../components/ui/Feedback';
 
-// ─── Icons (inline SVG — no extra deps) ──────────────────
+/** Inline SVG icon components used throughout the showcase. */
 const SearchIcon = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
     <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
@@ -68,7 +68,7 @@ const DatabaseIcon = () => (
   </svg>
 );
 
-// ─── Section divider ──────────────────────────────────────
+
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <section style={{ marginBottom: 48 }}>
     <div style={{
@@ -92,7 +92,10 @@ const Row = ({ children, wrap = true }: { children: React.ReactNode; wrap?: bool
   </div>
 );
 
-// ─── Main showcase page ───────────────────────────────────
+/**
+ * Component library showcase page demonstrating all UI components
+ * with interactive examples for documentation and development.
+ */
 export default function ComponentShowcase() {
   const { activeKey, onChange } = useTabs('buttons');
   const { toasts, dismiss, toast } = useToast();
@@ -369,7 +372,7 @@ export default function ComponentShowcase() {
                 <Caption>facebook/react</Caption>
                 <Caption>#28741</Caption>
                 <Caption>opened 3 days ago</Caption>
-                <Caption>💬 12</Caption>
+                <Caption>12 comments</Caption>
               </div>
             </Card>
           </Section>
@@ -552,7 +555,7 @@ export default function ComponentShowcase() {
   );
 }
 
-// ─── Nested tabs example ──────────────────────────────────
+
 function NestedTabsExample() {
   const { activeKey, onChange } = useTabs('issues');
   return (

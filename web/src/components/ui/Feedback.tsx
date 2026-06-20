@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import '../styles/feedback.css';
 
-// ─── Alert (inline) ───────────────────────────────────────
+/** Alert component for inline status messages. */
 type AlertVariant = 'info' | 'success' | 'warning' | 'error';
 
 const ALERT_ICONS: Record<AlertVariant, React.ReactNode> = {
@@ -28,7 +28,7 @@ export const Alert: React.FC<AlertProps> = ({ variant = 'info', title, children,
   </div>
 );
 
-// ─── Toast ────────────────────────────────────────────────
+/** Toast notification data model. */
 type ToastVariant = 'info' | 'success' | 'warning' | 'error';
 
 interface ToastData {
@@ -66,7 +66,7 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onDismis
   </div>
 );
 
-// ─── useToast hook ────────────────────────────────────────
+/** Hook for managing toast notifications. */
 export function useToast() {
   const [toasts, setToasts] = useState<ToastData[]>([]);
 
@@ -98,7 +98,7 @@ export function useToast() {
   };
 }
 
-// ─── Empty State ──────────────────────────────────────────
+/** Empty state placeholder with optional icon, title, body, and action. */
 interface EmptyStateProps {
   icon?: React.ReactNode;
   title: string;
@@ -116,7 +116,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({ icon, title, body, actio
   </div>
 );
 
-// ─── Spinner ──────────────────────────────────────────────
+/** Spinner for loading states. */
 type SpinnerSize = 'sm' | 'md' | 'lg';
 
 interface SpinnerProps {

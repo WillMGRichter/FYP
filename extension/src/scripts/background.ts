@@ -1,8 +1,11 @@
 /**
- * Background Service Worker
- * Handles extension lifecycle and communication
+ * Background service worker for the browser extension.
+ * Handles extension lifecycle events and message-based storage operations.
  */
 
+/**
+ * Extension configuration persisted in chrome storage.
+ */
 interface ExtensionConfig {
   backendUrl: string;
   authToken: string;
@@ -16,12 +19,10 @@ interface ExtensionConfig {
   }>;
 }
 
-// Initialize extension configuration on install
 chrome.runtime.onInstalled.addListener(async (details) => {
   if (details.reason === 'install') {
     console.log('[Background] Extension installed');
 
-    // Set default config
     const defaultConfig: Partial<ExtensionConfig> = {
       backendUrl: '',
       authToken: '',
@@ -34,7 +35,6 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   }
 });
 
-// Listen for messages from content scripts and popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('[Background] Received message:', message, 'from:', sender.tab?.url);
 
@@ -50,10 +50,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleClearCollectionRuns(sendResponse);
   }
 
-  // Return true to indicate we'll send response asynchronously
   return true;
 });
 
+/**
+ * Persist partial configuration to chrome storage.
+ */
 async function handleSaveConfig(config: Partial<ExtensionConfig>, sendResponse: (response: unknown) => void) {
   try {
     await chrome.storage.sync.set(config);
@@ -65,6 +67,9 @@ async function handleSaveConfig(config: Partial<ExtensionConfig>, sendResponse: 
   }
 }
 
+/**
+ * Retrieve full configuration from chrome storage.
+ */
 async function handleGetConfig(sendResponse: (response: ExtensionConfig) => void) {
   try {
     const config = await chrome.storage.sync.get([
@@ -85,6 +90,10 @@ async function handleGetConfig(sendResponse: (response: ExtensionConfig) => void
   }
 }
 
+/**
+ * Add a new collection run to the history list.
+ * Retains only the most recent 100 runs.
+ */
 async function handleAddCollectionRun(
   data: { data: unknown; status: string },
   sendResponse: (response: unknown) => void
@@ -100,7 +109,6 @@ async function handleAddCollectionRun(
 
     collectionRuns.push(newRun);
 
-    // Keep only last 100 runs
     if (collectionRuns.length > 100) {
       collectionRuns.splice(0, collectionRuns.length - 100);
     }
@@ -114,6 +122,9 @@ async function handleAddCollectionRun(
   }
 }
 
+/**
+ * Retrieve all collection runs from chrome storage.
+ */
 async function handleGetCollectionRuns(sendResponse: (response: unknown) => void) {
   try {
     const { collectionRuns = [] } = await chrome.storage.sync.get(['collectionRuns']);
@@ -124,6 +135,9 @@ async function handleGetCollectionRuns(sendResponse: (response: unknown) => void
   }
 }
 
+/**
+ * Remove all collection runs from chrome storage.
+ */
 async function handleClearCollectionRuns(sendResponse: (response: unknown) => void) {
   try {
     await chrome.storage.sync.set({ collectionRuns: [] });
