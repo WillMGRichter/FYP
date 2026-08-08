@@ -1,3 +1,12 @@
+# Quick start
+    cd backend
+    pnpm run dev
+    ```
+    ## 4. Run the frontend
+
+    cd web
+    pnpm run dev
+
 # Running the Frontend and Backend
 
 This project is a pnpm workspace with three packages:
