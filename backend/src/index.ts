@@ -561,6 +561,126 @@ app.post<{ Body: TokenPayload }>(`${API_PREFIX}/github/tokens`, async (request, 
   return reply.code(201).send(jsonForResponse({ token: saved }));
 });
 
+/**
+ * Load a repository with its artifacts and all entity snapshots.
+ * Artifact-linked snapshots and repository-level snapshots (artifactId null) are
+ * returned together so clients can render the full collected dataset.
+ * @param id - Repository record ID
+ */
+async function loadRepositoryWithSnapshots(id: string) {
+  return prisma.repository.findUnique({
+    where: { id },
+    include: {
+      artifacts: {
+        orderBy: [{ type: 'asc' }, { githubNumber: 'asc' }],
+        include: {
+          snapshots: {
+            orderBy: { capturedAt: 'desc' },
+            select: { id: true, source: true, capturedAt: true, payload: true },
+          },
+        },
+      },
+      snapshots: {
+        where: { artifactId: null },
+        orderBy: { capturedAt: 'desc' },
+        select: { id: true, source: true, capturedAt: true, payload: true },
+      },
+    },
+  });
+}
+
+/**
+ * Escape a value for CSV output, quoting and doubling embedded quotes.
+ * @param value - Raw cell value
+ * @returns CSV-safe quoted cell
+ */
+const csvCell = (value: string | number | null | undefined) => {
+  const text = value == null ? '' : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+};
+
+/** Detail endpoint: repository metadata, artifacts, and collected snapshots. */
+app.get<{ Params: { id: string } }>(`${API_PREFIX}/repositories/:id`, async (request, reply) => {
+  const repository = await loadRepositoryWithSnapshots(request.params.id);
+  if (!repository) {
+    return reply.code(404).send({ error: 'Repository was not found.' });
+  }
+
+  return jsonForResponse({ repository });
+});
+
+/** Export endpoint: download all collected data for a repository as JSON or CSV. */
+app.get<{ Params: { id: string }; Querystring: { format?: string } }>(
+  `${API_PREFIX}/repositories/:id/export`,
+  async (request, reply) => {
+    const repository = await loadRepositoryWithSnapshots(request.params.id);
+    if (!repository) {
+      return reply.code(404).send({ error: 'Repository was not found.' });
+    }
+
+    const filename = `${repository.fullName.replace(/\//g, '-')}-data`;
+
+    if (request.query.format === 'csv') {
+      const header = 'entityType,source,githubNumber,githubSha,title,state,authorLogin,htmlUrl,capturedAt,payload';
+      const rows = [header];
+
+      for (const artifact of repository.artifacts) {
+        for (const snapshot of artifact.snapshots) {
+          rows.push(
+            [
+              artifact.type,
+              snapshot.source,
+              artifact.githubNumber,
+              artifact.githubSha,
+              artifact.title,
+              artifact.state,
+              artifact.authorLogin,
+              artifact.htmlUrl,
+              snapshot.capturedAt.toISOString(),
+              JSON.stringify(snapshot.payload),
+            ]
+              .map(csvCell)
+              .join(','),
+          );
+        }
+      }
+
+      for (const snapshot of repository.snapshots) {
+        rows.push(
+          [
+            'REPOSITORY',
+            snapshot.source,
+            null,
+            null,
+            repository.fullName,
+            null,
+            null,
+            repository.htmlUrl,
+            snapshot.capturedAt.toISOString(),
+            JSON.stringify(snapshot.payload),
+          ]
+            .map(csvCell)
+            .join(','),
+        );
+      }
+
+      reply.header('Content-Type', 'text/csv; charset=utf-8');
+      reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
+      return reply.send(rows.join('\n'));
+    }
+
+    reply.header('Content-Type', 'application/json; charset=utf-8');
+    reply.header('Content-Disposition', `attachment; filename="${filename}.json"`);
+    return reply.send(
+      JSON.stringify(
+        jsonForResponse({ exportedAt: new Date().toISOString(), repository }),
+        null,
+        2,
+      ),
+    );
+  },
+);
+
 /** List all repositories in the snapshot store with counts and star status. */
 app.get(`${API_PREFIX}/repositories`, async (request) => {
   const account = await getOptionalAccount(request);

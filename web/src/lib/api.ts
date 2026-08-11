@@ -96,6 +96,42 @@ export type Contribution = {
 };
 
 /**
+ * A single captured snapshot (immutable data point) for an artifact or repository.
+ */
+export type SnapshotDetail = {
+  id: string;
+  source: string;
+  capturedAt: string;
+  payload: unknown;
+};
+
+/**
+ * A collected artifact (issue, pull request, or commit) with its snapshots.
+ */
+export type ArtifactDetail = {
+  id: string;
+  type: 'REPOSITORY' | 'ISSUE' | 'PULL_REQUEST' | 'COMMIT';
+  githubNumber: number | null;
+  githubSha: string | null;
+  title: string | null;
+  state: string | null;
+  authorLogin: string | null;
+  htmlUrl: string | null;
+  githubCreatedAt: string | null;
+  githubUpdatedAt: string | null;
+  collectedAt: string;
+  snapshots: SnapshotDetail[];
+};
+
+/**
+ * A repository with its full collected dataset (artifacts and snapshots).
+ */
+export type RepositoryDetail = Repository & {
+  artifacts: ArtifactDetail[];
+  snapshots: SnapshotDetail[];
+};
+
+/**
  * Session token persistence layer using localStorage.
  */
 export const sessionStore = {
@@ -192,6 +228,37 @@ export const api = {
   /** List all repositories in the snapshot store. */
   async listRepositories() {
     return request<{ repositories: Repository[] }>('/repositories');
+  },
+
+  /**
+   * Fetch a repository with its full collected dataset (artifacts and snapshots).
+   * @param id - Repository record ID
+   */
+  async getRepository(id: string) {
+    return request<{ repository: RepositoryDetail }>(`/repositories/${encodeURIComponent(id)}`);
+  },
+
+  /**
+   * Download a repository's collected dataset as a JSON or CSV file.
+   * @param id - Repository record ID
+   * @param format - Export format (json or csv)
+   * @returns The exported file as a Blob
+   */
+  async exportRepository(id: string, format: 'json' | 'csv') {
+    const sessionToken = sessionStore.get();
+    const response = await fetch(
+      `${API_BASE_URL}/repositories/${encodeURIComponent(id)}/export?format=${format}`,
+      {
+        headers: sessionToken ? { Authorization: `Bearer ${sessionToken}` } : undefined,
+      },
+    );
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error ?? `Export failed with status ${response.status}`);
+    }
+
+    return response.blob();
   },
 
   /** List collection runs. */

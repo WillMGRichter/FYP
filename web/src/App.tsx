@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import './App.css';
 
 import { Badge } from './components/ui/Badge';
@@ -38,6 +39,7 @@ const statusVariant = (status: CollectionRun['status']) => {
  * stored repositories, and contribution summaries.
  */
 export default function App() {
+  const navigate = useNavigate();
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [runs, setRuns] = useState<CollectionRun[]>([]);
   const [tokens, setTokens] = useState<GitHubToken[]>([]);
@@ -417,13 +419,22 @@ export default function App() {
 
                 <div className="repository-actions">
                   <Caption>Last collected {formatDate(repository.collectedAt)}</Caption>
-                  <Button
-                    size="sm"
-                    variant={repository.isStarred ? 'primary' : 'secondary'}
-                    onClick={() => handleToggleStar(repository)}
-                  >
-                    {repository.isStarred ? 'Starred' : 'Star'}
-                  </Button>
+                  <div className="repository-action-buttons">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => navigate(`/repositories/${repository.id}`)}
+                    >
+                      View data
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={repository.isStarred ? 'primary' : 'secondary'}
+                      onClick={() => handleToggleStar(repository)}
+                    >
+                      {repository.isStarred ? 'Starred' : 'Star'}
+                    </Button>
+                  </div>
                 </div>
               </Card>
             ))}

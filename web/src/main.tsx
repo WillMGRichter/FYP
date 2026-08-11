@@ -12,6 +12,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import SettingsPage from './pages/SettingsPage';
 import Layout from './pages/Layout';
+import RepositoryDetailPage from './pages/RepositoryDetailPage.tsx';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -21,6 +22,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/" element={<App />} />
           <Route path="/components" element={<ComponentShowcase />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/repositories/:id" element={<RepositoryDetailPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
