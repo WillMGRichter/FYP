@@ -86,6 +86,8 @@ model Repository {
   isPrivate        Boolean          @default(false)
   isFork           Boolean          @default(false)
   language         String?
+  license          String?
+  topics           String[]
   stars            Int              @default(0)
   forks            Int              @default(0)
   openIssues       Int              @default(0)
@@ -100,6 +102,10 @@ model Repository {
   collectionRuns   CollectionRun[]
   starredBy        StarredRepository[]
   contributions    AccountContribution[]
+  comments         EntityComment[]
+  reviews          PullRequestReview[]
+  releases         Release[]
+  contributors     Contributor[]
 
   @@index([owner, name])
   @@index([language])
@@ -116,6 +122,10 @@ model RepositoryArtifact {
   state           String?
   authorLogin     String?
   htmlUrl         String?
+  labels          String[]
+  additions       Int?
+  deletions       Int?
+  changedFiles    Int?
   mergedAt        DateTime?
   closedAt        DateTime?
   githubCreatedAt DateTime?
@@ -123,10 +133,81 @@ model RepositoryArtifact {
   collectedAt     DateTime         @default(now())
   repository      Repository       @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
   snapshots       EntitySnapshot[]
+  comments        EntityComment[]
+  reviews         PullRequestReview[]
 
   @@unique([repositoryId, type, githubNodeId])
   @@index([repositoryId, type])
   @@index([authorLogin])
+}
+
+model EntityComment {
+  id              String             @id @default(cuid())
+  repositoryId    String
+  artifactId      String
+  githubNodeId    String?
+  kind            String             @default("comment")
+  authorLogin     String?
+  body            String?
+  githubCreatedAt DateTime?
+  githubUpdatedAt DateTime?
+  createdAt       DateTime           @default(now())
+  repository      Repository         @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  artifact        RepositoryArtifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+
+  @@unique([artifactId, githubNodeId])
+  @@index([repositoryId])
+  @@index([authorLogin])
+}
+
+model PullRequestReview {
+  id              String             @id @default(cuid())
+  repositoryId    String
+  artifactId      String
+  githubNodeId    String?
+  authorLogin     String?
+  state           String?
+  body            String?
+  submittedAt     DateTime?
+  githubCreatedAt DateTime?
+  createdAt       DateTime           @default(now())
+  repository      Repository         @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  artifact        RepositoryArtifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+
+  @@unique([artifactId, githubNodeId])
+  @@index([repositoryId])
+  @@index([authorLogin])
+}
+
+model Release {
+  id           String     @id @default(cuid())
+  repositoryId String
+  githubNodeId String?
+  tagName      String
+  name         String?
+  prerelease   Boolean    @default(false)
+  draft        Boolean    @default(false)
+  authorLogin  String?
+  publishedAt  DateTime?
+  htmlUrl      String?
+  createdAt    DateTime   @default(now())
+  repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([repositoryId, tagName])
+  @@index([publishedAt])
+}
+
+model Contributor {
+  id            String     @id @default(cuid())
+  repositoryId  String
+  login         String
+  contributions Int        @default(0)
+  htmlUrl       String?
+  createdAt     DateTime   @default(now())
+  repository    Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([repositoryId, login])
+  @@index([login])
 }
 
 model EntitySnapshot {

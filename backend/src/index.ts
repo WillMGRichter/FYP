@@ -24,6 +24,8 @@ type GitHubRepository = {
   private: boolean;
   fork: boolean;
   language: string | null;
+  license: { spdx_id: string | null } | null;
+  topics?: string[];
   stargazers_count: number;
   forks_count: number;
   open_issues_count: number;
@@ -39,6 +41,7 @@ type GitHubIssue = {
   title: string;
   state: string;
   user: { login: string } | null;
+  labels?: Array<{ name: string }>;
   html_url: string;
   pull_request?: unknown;
   closed_at: string | null;
@@ -60,6 +63,48 @@ type GitHubCommit = {
     author: { date: string | null } | null;
     committer: { date: string | null } | null;
   };
+};
+
+type GitHubCommitDetail = GitHubCommit & {
+  stats?: { additions?: number; deletions?: number; total?: number };
+  files?: Array<{ filename: string }>;
+};
+
+type GitHubComment = {
+  id: number;
+  node_id: string;
+  user: { login: string } | null;
+  body: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+type GitHubReview = {
+  id: number;
+  node_id: string;
+  user: { login: string } | null;
+  state: string;
+  body: string | null;
+  submitted_at: string | null;
+  created_at: string | null;
+};
+
+type GitHubRelease = {
+  id: number;
+  node_id: string;
+  tag_name: string;
+  name: string | null;
+  prerelease: boolean;
+  draft: boolean;
+  author: { login: string } | null;
+  published_at: string | null;
+  html_url: string;
+};
+
+type GitHubContributor = {
+  login: string;
+  contributions: number;
+  html_url: string;
 };
 
 type TokenPayload = {
@@ -360,6 +405,78 @@ async function getToken(tokenId?: string, accountId?: string) {
 }
 
 /**
+ * Check whether a GitHub response's Link header advertises a next page.
+ * @param response - Raw GitHub response
+ * @returns True if another page is available
+ */
+const hasNextPage = (response: Response) => response.headers.get('link')?.includes('rel="next"') ?? false;
+
+/**
+ * Fetch every page of a GitHub list endpoint.
+ * @param path - API path (may already contain query parameters)
+ * @param token - Optional Bearer token
+ * @param perPage - Page size (GitHub max is 100)
+ * @param maxPages - Hard cap on the number of pages to fetch
+ * @returns Concatenated list of items
+ */
+async function fetchAllPages<T>(path: string, token?: string, perPage = 100, maxPages = 50): Promise<T[]> {
+  const items: T[] = [];
+  const separator = path.includes('?') ? '&' : '?';
+
+  for (let page = 1; page <= maxPages; page++) {
+    const { data, response } = await githubFetch<T[]>(
+      `${path}${separator}per_page=${perPage}&page=${page}`,
+      token,
+    );
+    items.push(...data);
+    if (data.length === 0 || !hasNextPage(response)) break;
+  }
+
+  return items;
+}
+
+/**
+ * Run an async task over every item with a bounded concurrency level.
+ * @param items - Input values
+ * @param limit - Maximum concurrent tasks
+ * @param task - Async task per item
+ * @returns Results in input order
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  task: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let index = 0;
+
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (index < items.length) {
+      const current = index++;
+      results[current] = await task(items[current]);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
+
+/**
+ * Run a task and swallow failures so a single best-effort fetch
+ * cannot fail an entire collection run.
+ * @param task - Async task
+ * @returns The task result, or undefined on error
+ */
+const tryFetch = async <T>(task: () => Promise<T>): Promise<T | undefined> => {
+  try {
+    return await task();
+  } catch (error) {
+    app.log.warn(`Best-effort GitHub fetch skipped: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+};
+
+/**
  * Create or update an entity snapshot.
  * Uses payload hash for deduplication to avoid storing identical snapshots.
  */
@@ -578,12 +695,69 @@ async function loadRepositoryWithSnapshots(id: string) {
             orderBy: { capturedAt: 'desc' },
             select: { id: true, source: true, capturedAt: true, payload: true },
           },
+          comments: {
+            orderBy: { githubCreatedAt: 'asc' },
+            select: {
+              id: true,
+              kind: true,
+              authorLogin: true,
+              body: true,
+              githubCreatedAt: true,
+            },
+          },
         },
       },
       snapshots: {
         where: { artifactId: null },
         orderBy: { capturedAt: 'desc' },
         select: { id: true, source: true, capturedAt: true, payload: true },
+      },
+      reviews: {
+        orderBy: { submittedAt: 'asc' },
+        select: {
+          id: true,
+          artifactId: true,
+          authorLogin: true,
+          state: true,
+          body: true,
+          submittedAt: true,
+        },
+      },
+      releases: {
+        orderBy: { publishedAt: 'desc' },
+        select: {
+          id: true,
+          tagName: true,
+          name: true,
+          prerelease: true,
+          draft: true,
+          authorLogin: true,
+          publishedAt: true,
+          htmlUrl: true,
+        },
+      },
+      contributors: {
+        orderBy: { contributions: 'desc' },
+        select: {
+          id: true,
+          login: true,
+          contributions: true,
+          htmlUrl: true,
+        },
+      },
+      collectionRuns: {
+        orderBy: { startedAt: 'desc' },
+        select: {
+          id: true,
+          status: true,
+          source: true,
+          startedAt: true,
+          completedAt: true,
+          issuesCount: true,
+          pullsCount: true,
+          commitsCount: true,
+          errorMessage: true,
+        },
       },
     },
   });
@@ -599,14 +773,96 @@ const csvCell = (value: string | number | null | undefined) => {
   return `"${text.replace(/"/g, '""')}"`;
 };
 
-/** Detail endpoint: repository metadata, artifacts, and collected snapshots. */
+/** Compute engagement and health metrics from the collected artifact data. */
+function computeHealthMetrics(repository: NonNullable<Awaited<ReturnType<typeof loadRepositoryWithSnapshots>>>) {
+  const hoursBetween = (from: Date, to: Date) => Math.max(0, (to.getTime() - from.getTime()) / 3_600_000);
+  const median = (values: number[]) => {
+    if (values.length === 0) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  };
+
+  const firstResponseHours: number[] = [];
+  const firstReviewHours: number[] = [];
+  let issuesWithComments = 0;
+  let issuesOpen = 0;
+  let pullsOpen = 0;
+  let pullsMerged = 0;
+  let commentsCount = 0;
+  let reviewCommentsCount = 0;
+  const commitStats = { withStats: 0, totalAdditions: 0, totalDeletions: 0, totalChangedFiles: 0 };
+
+  const earliestReviewByArtifact = new Map<string, Date>();
+  for (const review of repository.reviews) {
+    if (!review.submittedAt) continue;
+    const existing = earliestReviewByArtifact.get(review.artifactId);
+    if (!existing || review.submittedAt < existing) {
+      earliestReviewByArtifact.set(review.artifactId, review.submittedAt);
+    }
+  }
+
+  for (const artifact of repository.artifacts) {
+    commentsCount += artifact.comments.length;
+    reviewCommentsCount += artifact.comments.filter((comment) => comment.kind === 'review_comment').length;
+
+    if (artifact.type === 'ISSUE') {
+      if (artifact.state === 'open') issuesOpen += 1;
+      const firstComment = artifact.comments
+        .filter(
+          (comment) =>
+            comment.kind === 'comment' &&
+            comment.githubCreatedAt &&
+            comment.githubCreatedAt > (artifact.githubCreatedAt ?? new Date(0)),
+        )
+        .sort((a, b) => (a.githubCreatedAt as Date).getTime() - (b.githubCreatedAt as Date).getTime())[0];
+      if (firstComment) {
+        issuesWithComments += 1;
+        if (artifact.githubCreatedAt) {
+          firstResponseHours.push(hoursBetween(artifact.githubCreatedAt, firstComment.githubCreatedAt as Date));
+        }
+      }
+    } else if (artifact.type === 'PULL_REQUEST') {
+      if (artifact.state === 'open') pullsOpen += 1;
+      if (artifact.mergedAt) pullsMerged += 1;
+      const firstReviewAt = earliestReviewByArtifact.get(artifact.id);
+      if (artifact.githubCreatedAt && firstReviewAt) {
+        firstReviewHours.push(hoursBetween(artifact.githubCreatedAt, firstReviewAt));
+      }
+    } else if (artifact.type === 'COMMIT') {
+      if (artifact.additions != null || artifact.deletions != null || artifact.changedFiles != null) {
+        commitStats.withStats += 1;
+      }
+      commitStats.totalAdditions += artifact.additions ?? 0;
+      commitStats.totalDeletions += artifact.deletions ?? 0;
+      commitStats.totalChangedFiles += artifact.changedFiles ?? 0;
+    }
+  }
+
+  return {
+    issuesOpen,
+    pullsOpen,
+    pullsMerged,
+    commentsCount,
+    reviewCommentsCount,
+    issuesWithComments,
+    medianIssueFirstResponseHours: median(firstResponseHours),
+    medianPrFirstReviewHours: median(firstReviewHours),
+    commitStats,
+    releasesCount: repository.releases.length,
+    contributorsCount: repository.contributors.length,
+    collectionRunsCount: repository.collectionRuns.length,
+  };
+}
+
+/** Detail endpoint: repository metadata, artifacts, comments, reviews, releases, contributors, and health metrics. */
 app.get<{ Params: { id: string } }>(`${API_PREFIX}/repositories/:id`, async (request, reply) => {
   const repository = await loadRepositoryWithSnapshots(request.params.id);
   if (!repository) {
     return reply.code(404).send({ error: 'Repository was not found.' });
   }
 
-  return jsonForResponse({ repository });
+  return jsonForResponse({ repository, metrics: computeHealthMetrics(repository) });
 });
 
 /** Export endpoint: download all collected data for a repository as JSON or CSV. */
@@ -673,7 +929,7 @@ app.get<{ Params: { id: string }; Querystring: { format?: string } }>(
     reply.header('Content-Disposition', `attachment; filename="${filename}.json"`);
     return reply.send(
       JSON.stringify(
-        jsonForResponse({ exportedAt: new Date().toISOString(), repository }),
+        jsonForResponse({ exportedAt: new Date().toISOString(), repository, metrics: computeHealthMetrics(repository) }),
         null,
         2,
       ),
@@ -743,8 +999,374 @@ app.get(`${API_PREFIX}/collections`, async (request) => {
 });
 
 /**
+ * Persist a single discussion or review comment against its artifact.
+ */
+async function upsertComment(
+  repositoryId: string,
+  artifactId: string,
+  comment: GitHubComment,
+  kind: 'comment' | 'review_comment',
+) {
+  await prisma.entityComment.upsert({
+    where: { artifactId_githubNodeId: { artifactId, githubNodeId: comment.node_id } },
+    update: {
+      authorLogin: comment.user?.login,
+      body: comment.body,
+      githubUpdatedAt: parseDate(comment.updated_at),
+    },
+    create: {
+      repositoryId,
+      artifactId,
+      githubNodeId: comment.node_id,
+      kind,
+      authorLogin: comment.user?.login,
+      body: comment.body,
+      githubCreatedAt: parseDate(comment.created_at),
+      githubUpdatedAt: parseDate(comment.updated_at),
+    },
+  });
+}
+
+/**
+ * Collect the full dataset for a repository: metadata, issues, pull requests,
+ * commits (with diff stats), discussion and review comments, PR reviews,
+ * releases, and contributors, persisting everything as artifacts, comments,
+ * and snapshots.
+ */
+async function collectRepository(input: {
+  owner: string;
+  name: string;
+  token?: { id: string; raw: string };
+  runId: string;
+}) {
+  const { owner, name, token, runId } = input;
+  const fullName = `${owner}/${name}`;
+
+  const { data: repoPayload } = await githubFetch<GitHubRepository>(`/repos/${fullName}`, token?.raw);
+  const repository = await prisma.repository.upsert({
+    where: { githubId: BigInt(repoPayload.id) },
+    update: {
+      owner: repoPayload.owner.login,
+      name: repoPayload.name,
+      fullName: repoPayload.full_name,
+      htmlUrl: repoPayload.html_url,
+      description: repoPayload.description,
+      defaultBranch: repoPayload.default_branch,
+      isPrivate: repoPayload.private,
+      isFork: repoPayload.fork,
+      language: repoPayload.language,
+      license: repoPayload.license?.spdx_id ?? null,
+      topics: repoPayload.topics ?? [],
+      stars: repoPayload.stargazers_count,
+      forks: repoPayload.forks_count,
+      openIssues: repoPayload.open_issues_count,
+      pushedAt: parseDate(repoPayload.pushed_at),
+      githubCreatedAt: parseDate(repoPayload.created_at),
+      githubUpdatedAt: parseDate(repoPayload.updated_at),
+      collectedAt: new Date(),
+    },
+    create: {
+      githubId: BigInt(repoPayload.id),
+      owner: repoPayload.owner.login,
+      name: repoPayload.name,
+      fullName: repoPayload.full_name,
+      htmlUrl: repoPayload.html_url,
+      description: repoPayload.description,
+      defaultBranch: repoPayload.default_branch,
+      isPrivate: repoPayload.private,
+      isFork: repoPayload.fork,
+      language: repoPayload.language,
+      license: repoPayload.license?.spdx_id ?? null,
+      topics: repoPayload.topics ?? [],
+      stars: repoPayload.stargazers_count,
+      forks: repoPayload.forks_count,
+      openIssues: repoPayload.open_issues_count,
+      pushedAt: parseDate(repoPayload.pushed_at),
+      githubCreatedAt: parseDate(repoPayload.created_at),
+      githubUpdatedAt: parseDate(repoPayload.updated_at),
+    },
+  });
+
+  await prisma.collectionRun.update({
+    where: { id: runId },
+    data: { repositoryId: repository.id },
+  });
+
+  await createSnapshot({
+    repositoryId: repository.id,
+    entityType: 'REPOSITORY',
+    source: 'github_api',
+    payload: repoPayload,
+    collectionRunId: runId,
+  });
+
+  const [issuePayloads, pullPayloads, commitPayloads] = await Promise.all([
+    fetchAllPages<GitHubIssue>(`/repos/${fullName}/issues?state=all`, token?.raw),
+    fetchAllPages<GitHubPullRequest>(`/repos/${fullName}/pulls?state=all`, token?.raw),
+    fetchAllPages<GitHubCommit>(`/repos/${fullName}/commits`, token?.raw),
+  ]);
+
+  const issues = issuePayloads.filter((issue) => !issue.pull_request);
+  const labelNames = (labels?: Array<{ name: string }>) => (labels ?? []).map((label) => label.name);
+
+  for (const issue of issues) {
+    const artifact = await prisma.repositoryArtifact.upsert({
+      where: {
+        repositoryId_type_githubNodeId: {
+          repositoryId: repository.id,
+          type: 'ISSUE',
+          githubNodeId: issue.node_id,
+        },
+      },
+      update: {
+        githubNumber: issue.number,
+        title: issue.title,
+        state: issue.state,
+        authorLogin: issue.user?.login,
+        labels: labelNames(issue.labels),
+        htmlUrl: issue.html_url,
+        closedAt: parseDate(issue.closed_at),
+        githubCreatedAt: parseDate(issue.created_at),
+        githubUpdatedAt: parseDate(issue.updated_at),
+        collectedAt: new Date(),
+      },
+      create: {
+        repositoryId: repository.id,
+        type: 'ISSUE',
+        githubNodeId: issue.node_id,
+        githubNumber: issue.number,
+        title: issue.title,
+        state: issue.state,
+        authorLogin: issue.user?.login,
+        labels: labelNames(issue.labels),
+        htmlUrl: issue.html_url,
+        closedAt: parseDate(issue.closed_at),
+        githubCreatedAt: parseDate(issue.created_at),
+        githubUpdatedAt: parseDate(issue.updated_at),
+      },
+    });
+
+    await createSnapshot({
+      repositoryId: repository.id,
+      artifactId: artifact.id,
+      entityType: 'ISSUE',
+      source: 'github_api',
+      payload: issue,
+      collectionRunId: runId,
+    });
+  }
+
+  for (const pull of pullPayloads) {
+    const artifact = await prisma.repositoryArtifact.upsert({
+      where: {
+        repositoryId_type_githubNodeId: {
+          repositoryId: repository.id,
+          type: 'PULL_REQUEST',
+          githubNodeId: pull.node_id,
+        },
+      },
+      update: {
+        githubNumber: pull.number,
+        title: pull.title,
+        state: pull.state,
+        authorLogin: pull.user?.login,
+        labels: labelNames(pull.labels),
+        htmlUrl: pull.html_url,
+        mergedAt: parseDate(pull.merged_at),
+        closedAt: parseDate(pull.closed_at),
+        githubCreatedAt: parseDate(pull.created_at),
+        githubUpdatedAt: parseDate(pull.updated_at),
+        collectedAt: new Date(),
+      },
+      create: {
+        repositoryId: repository.id,
+        type: 'PULL_REQUEST',
+        githubNodeId: pull.node_id,
+        githubNumber: pull.number,
+        title: pull.title,
+        state: pull.state,
+        authorLogin: pull.user?.login,
+        labels: labelNames(pull.labels),
+        htmlUrl: pull.html_url,
+        mergedAt: parseDate(pull.merged_at),
+        closedAt: parseDate(pull.closed_at),
+        githubCreatedAt: parseDate(pull.created_at),
+        githubUpdatedAt: parseDate(pull.updated_at),
+      },
+    });
+
+    await createSnapshot({
+      repositoryId: repository.id,
+      artifactId: artifact.id,
+      entityType: 'PULL_REQUEST',
+      source: 'github_api',
+      payload: pull,
+      collectionRunId: runId,
+    });
+  }
+
+  await mapWithConcurrency(issues, 5, async (issue) => {
+    const comments = await tryFetch(() =>
+      fetchAllPages<GitHubComment>(`/repos/${fullName}/issues/${issue.number}/comments`, token?.raw),
+    );
+    if (!comments?.length) return;
+    const artifact = await prisma.repositoryArtifact.findFirst({
+      where: { repositoryId: repository.id, type: 'ISSUE', githubNumber: issue.number },
+    });
+    if (!artifact) return;
+    for (const comment of comments) {
+      await upsertComment(repository.id, artifact.id, comment, 'comment');
+    }
+  });
+
+  await mapWithConcurrency(pullPayloads, 5, async (pull) => {
+    const [discussionComments, inlineComments, reviews] = await Promise.all([
+      tryFetch(() => fetchAllPages<GitHubComment>(`/repos/${fullName}/issues/${pull.number}/comments`, token?.raw)),
+      tryFetch(() => fetchAllPages<GitHubComment>(`/repos/${fullName}/pulls/${pull.number}/comments`, token?.raw)),
+      tryFetch(() => fetchAllPages<GitHubReview>(`/repos/${fullName}/pulls/${pull.number}/reviews`, token?.raw)),
+    ]);
+    const artifact = await prisma.repositoryArtifact.findFirst({
+      where: { repositoryId: repository.id, type: 'PULL_REQUEST', githubNumber: pull.number },
+    });
+    if (!artifact) return;
+    for (const comment of discussionComments ?? []) {
+      await upsertComment(repository.id, artifact.id, comment, 'comment');
+    }
+    for (const comment of inlineComments ?? []) {
+      await upsertComment(repository.id, artifact.id, comment, 'review_comment');
+    }
+    for (const review of reviews ?? []) {
+      await prisma.pullRequestReview.upsert({
+        where: { artifactId_githubNodeId: { artifactId: artifact.id, githubNodeId: review.node_id } },
+        update: {
+          authorLogin: review.user?.login,
+          state: review.state,
+          body: review.body,
+          submittedAt: parseDate(review.submitted_at),
+        },
+        create: {
+          repositoryId: repository.id,
+          artifactId: artifact.id,
+          githubNodeId: review.node_id,
+          authorLogin: review.user?.login,
+          state: review.state,
+          body: review.body,
+          submittedAt: parseDate(review.submitted_at),
+        },
+      });
+    }
+  });
+
+  const commitDetails = await mapWithConcurrency(commitPayloads.slice(0, 50), 5, async (commit) => {
+    const detail = await tryFetch(() =>
+      githubFetch<GitHubCommitDetail>(`/repos/${fullName}/commits/${commit.sha}`, token?.raw),
+    );
+    return detail?.data;
+  });
+
+  for (let index = 0; index < commitPayloads.length; index += 1) {
+    const commit = commitPayloads[index];
+    const detail = commitDetails[index];
+    const artifact = await prisma.repositoryArtifact.upsert({
+      where: {
+        repositoryId_type_githubNodeId: {
+          repositoryId: repository.id,
+          type: 'COMMIT',
+          githubNodeId: commit.node_id,
+        },
+      },
+      update: {
+        githubSha: commit.sha,
+        title: commit.commit.message.split('\n')[0],
+        authorLogin: commit.author?.login,
+        additions: detail?.stats?.additions,
+        deletions: detail?.stats?.deletions,
+        changedFiles: detail?.files?.length,
+        htmlUrl: commit.html_url,
+        githubCreatedAt: parseDate(commit.commit.author?.date),
+        githubUpdatedAt: parseDate(commit.commit.committer?.date),
+        collectedAt: new Date(),
+      },
+      create: {
+        repositoryId: repository.id,
+        type: 'COMMIT',
+        githubNodeId: commit.node_id,
+        githubSha: commit.sha,
+        title: commit.commit.message.split('\n')[0],
+        authorLogin: commit.author?.login,
+        additions: detail?.stats?.additions,
+        deletions: detail?.stats?.deletions,
+        changedFiles: detail?.files?.length,
+        htmlUrl: commit.html_url,
+        githubCreatedAt: parseDate(commit.commit.author?.date),
+        githubUpdatedAt: parseDate(commit.commit.committer?.date),
+      },
+    });
+
+    await createSnapshot({
+      repositoryId: repository.id,
+      artifactId: artifact.id,
+      entityType: 'COMMIT',
+      source: 'github_api',
+      payload: detail ?? commit,
+      collectionRunId: runId,
+    });
+  }
+
+  const [releases, contributors] = await Promise.all([
+    tryFetch(() => fetchAllPages<GitHubRelease>(`/repos/${fullName}/releases`, token?.raw)),
+    tryFetch(() => fetchAllPages<GitHubContributor>(`/repos/${fullName}/contributors`, token?.raw)),
+  ]);
+
+  for (const release of releases ?? []) {
+    await prisma.release.upsert({
+      where: { repositoryId_tagName: { repositoryId: repository.id, tagName: release.tag_name } },
+      update: {
+        githubNodeId: release.node_id,
+        name: release.name,
+        prerelease: release.prerelease,
+        draft: release.draft,
+        authorLogin: release.author?.login,
+        publishedAt: parseDate(release.published_at),
+        htmlUrl: release.html_url,
+      },
+      create: {
+        repositoryId: repository.id,
+        githubNodeId: release.node_id,
+        tagName: release.tag_name,
+        name: release.name,
+        prerelease: release.prerelease,
+        draft: release.draft,
+        authorLogin: release.author?.login,
+        publishedAt: parseDate(release.published_at),
+        htmlUrl: release.html_url,
+      },
+    });
+  }
+
+  for (const contributor of contributors ?? []) {
+    await prisma.contributor.upsert({
+      where: { repositoryId_login: { repositoryId: repository.id, login: contributor.login } },
+      update: {
+        contributions: contributor.contributions,
+        htmlUrl: contributor.html_url,
+      },
+      create: {
+        repositoryId: repository.id,
+        login: contributor.login,
+        contributions: contributor.contributions,
+        htmlUrl: contributor.html_url,
+      },
+    });
+  }
+
+  return { repository, issues, pullPayloads, commitPayloads };
+}
+
+/**
  * Trigger a full collection run: fetches repository metadata, issues,
- * pull requests, and commits from GitHub and persists them as snapshots.
+ * pull requests, commits, comments, reviews, releases, and contributors
+ * from GitHub and persists them as artifacts and snapshots.
  */
 app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (request, reply) => {
   const account = await getOptionalAccount(request);
@@ -766,200 +1388,12 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
   });
 
   try {
-    const { data: repoPayload } = await githubFetch<GitHubRepository>(`/repos/${owner}/${name}`, selectedToken?.raw);
-    const repository = await prisma.repository.upsert({
-      where: { githubId: BigInt(repoPayload.id) },
-      update: {
-        owner: repoPayload.owner.login,
-        name: repoPayload.name,
-        fullName: repoPayload.full_name,
-        htmlUrl: repoPayload.html_url,
-        description: repoPayload.description,
-        defaultBranch: repoPayload.default_branch,
-        isPrivate: repoPayload.private,
-        isFork: repoPayload.fork,
-        language: repoPayload.language,
-        stars: repoPayload.stargazers_count,
-        forks: repoPayload.forks_count,
-        openIssues: repoPayload.open_issues_count,
-        pushedAt: parseDate(repoPayload.pushed_at),
-        githubCreatedAt: parseDate(repoPayload.created_at),
-        githubUpdatedAt: parseDate(repoPayload.updated_at),
-        collectedAt: new Date(),
-      },
-      create: {
-        githubId: BigInt(repoPayload.id),
-        owner: repoPayload.owner.login,
-        name: repoPayload.name,
-        fullName: repoPayload.full_name,
-        htmlUrl: repoPayload.html_url,
-        description: repoPayload.description,
-        defaultBranch: repoPayload.default_branch,
-        isPrivate: repoPayload.private,
-        isFork: repoPayload.fork,
-        language: repoPayload.language,
-        stars: repoPayload.stargazers_count,
-        forks: repoPayload.forks_count,
-        openIssues: repoPayload.open_issues_count,
-        pushedAt: parseDate(repoPayload.pushed_at),
-        githubCreatedAt: parseDate(repoPayload.created_at),
-        githubUpdatedAt: parseDate(repoPayload.updated_at),
-      },
+    const { repository, issues, pullPayloads, commitPayloads } = await collectRepository({
+      owner,
+      name,
+      token: selectedToken,
+      runId: run.id,
     });
-
-    await prisma.collectionRun.update({
-      where: { id: run.id },
-      data: { repositoryId: repository.id },
-    });
-
-    await createSnapshot({
-      repositoryId: repository.id,
-      entityType: 'REPOSITORY',
-      source: 'github_api',
-      payload: repoPayload,
-      collectionRunId: run.id,
-    });
-
-    const [{ data: issuePayloads }, { data: pullPayloads }, { data: commitPayloads }] = await Promise.all([
-      githubFetch<GitHubIssue[]>(`/repos/${owner}/${name}/issues?state=all&per_page=30`, selectedToken?.raw),
-      githubFetch<GitHubPullRequest[]>(`/repos/${owner}/${name}/pulls?state=all&per_page=30`, selectedToken?.raw),
-      githubFetch<GitHubCommit[]>(`/repos/${owner}/${name}/commits?per_page=30`, selectedToken?.raw),
-    ]);
-
-    const issues = issuePayloads.filter((issue) => !issue.pull_request);
-
-    for (const issue of issues) {
-      const artifact = await prisma.repositoryArtifact.upsert({
-        where: {
-          repositoryId_type_githubNodeId: {
-            repositoryId: repository.id,
-            type: 'ISSUE',
-            githubNodeId: issue.node_id,
-          },
-        },
-        update: {
-          githubNumber: issue.number,
-          title: issue.title,
-          state: issue.state,
-          authorLogin: issue.user?.login,
-          htmlUrl: issue.html_url,
-          closedAt: parseDate(issue.closed_at),
-          githubCreatedAt: parseDate(issue.created_at),
-          githubUpdatedAt: parseDate(issue.updated_at),
-          collectedAt: new Date(),
-        },
-        create: {
-          repositoryId: repository.id,
-          type: 'ISSUE',
-          githubNodeId: issue.node_id,
-          githubNumber: issue.number,
-          title: issue.title,
-          state: issue.state,
-          authorLogin: issue.user?.login,
-          htmlUrl: issue.html_url,
-          closedAt: parseDate(issue.closed_at),
-          githubCreatedAt: parseDate(issue.created_at),
-          githubUpdatedAt: parseDate(issue.updated_at),
-        },
-      });
-
-      await createSnapshot({
-        repositoryId: repository.id,
-        artifactId: artifact.id,
-        entityType: 'ISSUE',
-        source: 'github_api',
-        payload: issue,
-        collectionRunId: run.id,
-      });
-    }
-
-    for (const pull of pullPayloads) {
-      const artifact = await prisma.repositoryArtifact.upsert({
-        where: {
-          repositoryId_type_githubNodeId: {
-            repositoryId: repository.id,
-            type: 'PULL_REQUEST',
-            githubNodeId: pull.node_id,
-          },
-        },
-        update: {
-          githubNumber: pull.number,
-          title: pull.title,
-          state: pull.state,
-          authorLogin: pull.user?.login,
-          htmlUrl: pull.html_url,
-          mergedAt: parseDate(pull.merged_at),
-          closedAt: parseDate(pull.closed_at),
-          githubCreatedAt: parseDate(pull.created_at),
-          githubUpdatedAt: parseDate(pull.updated_at),
-          collectedAt: new Date(),
-        },
-        create: {
-          repositoryId: repository.id,
-          type: 'PULL_REQUEST',
-          githubNodeId: pull.node_id,
-          githubNumber: pull.number,
-          title: pull.title,
-          state: pull.state,
-          authorLogin: pull.user?.login,
-          htmlUrl: pull.html_url,
-          mergedAt: parseDate(pull.merged_at),
-          closedAt: parseDate(pull.closed_at),
-          githubCreatedAt: parseDate(pull.created_at),
-          githubUpdatedAt: parseDate(pull.updated_at),
-        },
-      });
-
-      await createSnapshot({
-        repositoryId: repository.id,
-        artifactId: artifact.id,
-        entityType: 'PULL_REQUEST',
-        source: 'github_api',
-        payload: pull,
-        collectionRunId: run.id,
-      });
-    }
-
-    for (const commit of commitPayloads) {
-      const artifact = await prisma.repositoryArtifact.upsert({
-        where: {
-          repositoryId_type_githubNodeId: {
-            repositoryId: repository.id,
-            type: 'COMMIT',
-            githubNodeId: commit.node_id,
-          },
-        },
-        update: {
-          githubSha: commit.sha,
-          title: commit.commit.message.split('\n')[0],
-          authorLogin: commit.author?.login,
-          htmlUrl: commit.html_url,
-          githubCreatedAt: parseDate(commit.commit.author?.date),
-          githubUpdatedAt: parseDate(commit.commit.committer?.date),
-          collectedAt: new Date(),
-        },
-        create: {
-          repositoryId: repository.id,
-          type: 'COMMIT',
-          githubNodeId: commit.node_id,
-          githubSha: commit.sha,
-          title: commit.commit.message.split('\n')[0],
-          authorLogin: commit.author?.login,
-          htmlUrl: commit.html_url,
-          githubCreatedAt: parseDate(commit.commit.author?.date),
-          githubUpdatedAt: parseDate(commit.commit.committer?.date),
-        },
-      });
-
-      await createSnapshot({
-        repositoryId: repository.id,
-        artifactId: artifact.id,
-        entityType: 'COMMIT',
-        source: 'github_api',
-        payload: commit,
-        collectionRunId: run.id,
-      });
-    }
 
     const accountGithubLogin =
       account && selectedToken
@@ -1095,6 +1529,31 @@ app.post<{ Body: ExtensionSnapshotPayload }>(`${API_PREFIX}/extension/snapshots`
     return reply.code(404).send({ error: 'Repository must be synced before extension snapshots can be attached.' });
   }
 
+  const fields = payload instanceof Object ? (payload as Record<string, unknown>) : {};
+  const asString = (value: unknown) => (typeof value === 'string' && value.length > 0 ? value : undefined);
+  const asNumber = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
+  const asDate = (value: unknown) => {
+    const text = asString(value);
+    if (!text) return undefined;
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+  };
+  const asStringArray = (value: unknown) =>
+    Array.isArray(value) && value.every((item) => typeof item === 'string') ? (value as string[]) : undefined;
+
+  if (entityType === 'REPOSITORY') {
+    await prisma.repository.update({
+      where: { id: repository.id },
+      data: {
+        ...(asString(fields.language) ? { language: fields.language as string } : {}),
+        ...(asNumber(fields.starsCount) ? { stars: fields.starsCount as number } : {}),
+        ...(asNumber(fields.forksCount) ? { forks: fields.forksCount as number } : {}),
+        ...(asString(fields.license) ? { license: fields.license as string } : {}),
+        ...(asStringArray(fields.topics) ? { topics: fields.topics as string[] } : {}),
+      },
+    });
+  }
+
   const artifact =
     entityType === 'REPOSITORY'
       ? null
@@ -1107,16 +1566,52 @@ app.post<{ Body: ExtensionSnapshotPayload }>(`${API_PREFIX}/extension/snapshots`
             },
           },
           update: {
-            githubNumber: request.body.githubNumber,
-            githubSha: request.body.githubSha,
+            githubNumber: request.body.githubNumber ?? asNumber(fields.number),
+            githubSha: request.body.githubSha ?? asString(fields.sha),
+            title: asString(fields.title),
+            state: asString(fields.state),
+            authorLogin: asString(fields.author),
+            labels: asStringArray(fields.labels),
+            htmlUrl: asString(fields.url),
+            ...(entityType === 'PULL_REQUEST'
+              ? {
+                  additions: asNumber(fields.additions),
+                  deletions: asNumber(fields.deletions),
+                  changedFiles: asNumber(fields.changedFiles),
+                }
+              : {}),
+            ...(entityType === 'COMMIT'
+              ? { githubCreatedAt: asDate(fields.timestamp) }
+              : {
+                  githubCreatedAt: asDate(fields.createdAt),
+                  githubUpdatedAt: asDate(fields.updatedAt),
+                }),
             collectedAt: new Date(),
           },
           create: {
             repositoryId: repository.id,
             type: entityType,
             githubNodeId: request.body.githubNodeId ?? `${entityType}:${request.body.githubNumber ?? request.body.githubSha}`,
-            githubNumber: request.body.githubNumber,
-            githubSha: request.body.githubSha,
+            githubNumber: request.body.githubNumber ?? asNumber(fields.number),
+            githubSha: request.body.githubSha ?? asString(fields.sha),
+            title: asString(fields.title),
+            state: asString(fields.state),
+            authorLogin: asString(fields.author),
+            labels: asStringArray(fields.labels),
+            htmlUrl: asString(fields.url),
+            ...(entityType === 'PULL_REQUEST'
+              ? {
+                  additions: asNumber(fields.additions),
+                  deletions: asNumber(fields.deletions),
+                  changedFiles: asNumber(fields.changedFiles),
+                }
+              : {}),
+            ...(entityType === 'COMMIT'
+              ? { githubCreatedAt: asDate(fields.timestamp) }
+              : {
+                  githubCreatedAt: asDate(fields.createdAt),
+                  githubUpdatedAt: asDate(fields.updatedAt),
+                }),
           },
         });
 
@@ -1131,10 +1626,72 @@ app.post<{ Body: ExtensionSnapshotPayload }>(`${API_PREFIX}/extension/snapshots`
   return reply.code(201).send({ ok: true });
 });
 
+/**
+ * Re-collect stale repositories. Enabled when AUTO_RESYNC_HOURS is set; runs
+ * once at startup and then repeats on the same interval.
+ */
+async function runScheduledSync() {
+  const intervalHours = Number(process.env.AUTO_RESYNC_HOURS);
+  if (!Number.isFinite(intervalHours) || intervalHours <= 0) return;
+
+  const token = await prisma.gitHubToken.findFirst({
+    orderBy: [{ lastValidatedAt: 'desc' }, { updatedAt: 'desc' }],
+  });
+  if (!token) {
+    app.log.warn('Scheduled sync skipped: no GitHub token available.');
+    return;
+  }
+  const selectedToken = { id: token.id, raw: decryptToken(token.encryptedToken) };
+  const cutoff = new Date(Date.now() - intervalHours * 3_600_000);
+
+  const staleRepositories = await prisma.repository.findMany({
+    where: { collectedAt: { lt: cutoff } },
+    take: 10,
+  });
+
+  for (const repository of staleRepositories) {
+    const run = await prisma.collectionRun.create({
+      data: { status: 'RUNNING', source: 'scheduler', tokenId: token.id },
+    });
+    try {
+      const result = await collectRepository({
+        owner: repository.owner,
+        name: repository.name,
+        token: selectedToken,
+        runId: run.id,
+      });
+      await prisma.collectionRun.update({
+        where: { id: run.id },
+        data: {
+          status: 'COMPLETED',
+          completedAt: new Date(),
+          issuesCount: result.issues.length,
+          pullsCount: result.pullPayloads.length,
+          commitsCount: result.commitPayloads.length,
+        },
+      });
+      app.log.info(`Scheduled sync completed for ${repository.fullName}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown scheduled sync failure';
+      await prisma.collectionRun.update({
+        where: { id: run.id },
+        data: { status: 'FAILED', completedAt: new Date(), errorMessage: message },
+      });
+      app.log.warn(`Scheduled sync failed for ${repository.fullName}: ${message}`);
+    }
+  }
+
+  if (staleRepositories.length > 0) {
+    app.log.info(`Scheduled sync re-scan: collected ${staleRepositories.length} stale repositories.`);
+  }
+  setTimeout(runScheduledSync, intervalHours * 3_600_000);
+}
+
 const start = async () => {
   const port = Number(process.env.PORT ?? 3000);
   const host = process.env.HOST ?? '0.0.0.0';
   await app.listen({ port, host });
+  runScheduledSync();
 };
 
 start().catch((error) => {

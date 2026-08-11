@@ -35,6 +35,8 @@ export type Repository = {
   htmlUrl: string;
   description: string | null;
   language: string | null;
+  license: string | null;
+  topics: string[];
   stars: number;
   forks: number;
   openIssues: number;
@@ -106,6 +108,53 @@ export type SnapshotDetail = {
 };
 
 /**
+ * A comment (discussion or inline review) attached to an artifact.
+ */
+export type CommentDetail = {
+  id: string;
+  kind: string;
+  authorLogin: string | null;
+  body: string | null;
+  githubCreatedAt: string | null;
+};
+
+/**
+ * A PR review event.
+ */
+export type ReviewDetail = {
+  id: string;
+  artifactId: string;
+  authorLogin: string | null;
+  state: string | null;
+  body: string | null;
+  submittedAt: string | null;
+};
+
+/**
+ * A tagged release of the repository.
+ */
+export type ReleaseDetail = {
+  id: string;
+  tagName: string;
+  name: string | null;
+  prerelease: boolean;
+  draft: boolean;
+  authorLogin: string | null;
+  publishedAt: string | null;
+  htmlUrl: string | null;
+};
+
+/**
+ * A repository contributor.
+ */
+export type ContributorDetail = {
+  id: string;
+  login: string;
+  contributions: number;
+  htmlUrl: string | null;
+};
+
+/**
  * A collected artifact (issue, pull request, or commit) with its snapshots.
  */
 export type ArtifactDetail = {
@@ -116,19 +165,51 @@ export type ArtifactDetail = {
   title: string | null;
   state: string | null;
   authorLogin: string | null;
+  labels: string[];
+  additions: number | null;
+  deletions: number | null;
+  changedFiles: number | null;
   htmlUrl: string | null;
   githubCreatedAt: string | null;
   githubUpdatedAt: string | null;
   collectedAt: string;
   snapshots: SnapshotDetail[];
+  comments: CommentDetail[];
 };
 
 /**
- * A repository with its full collected dataset (artifacts and snapshots).
+ * A repository with its full collected dataset.
  */
 export type RepositoryDetail = Repository & {
   artifacts: ArtifactDetail[];
   snapshots: SnapshotDetail[];
+  reviews: ReviewDetail[];
+  releases: ReleaseDetail[];
+  contributors: ContributorDetail[];
+  collectionRuns: CollectionRun[];
+};
+
+/**
+ * Engagement and health metrics computed from the collected dataset.
+ */
+export type HealthMetrics = {
+  issuesOpen: number;
+  pullsOpen: number;
+  pullsMerged: number;
+  commentsCount: number;
+  reviewCommentsCount: number;
+  issuesWithComments: number;
+  medianIssueFirstResponseHours: number | null;
+  medianPrFirstReviewHours: number | null;
+  commitStats: {
+    withStats: number;
+    totalAdditions: number;
+    totalDeletions: number;
+    totalChangedFiles: number;
+  };
+  releasesCount: number;
+  contributorsCount: number;
+  collectionRunsCount: number;
 };
 
 /**
@@ -231,11 +312,12 @@ export const api = {
   },
 
   /**
-   * Fetch a repository with its full collected dataset (artifacts and snapshots).
+   * Fetch a repository with its full collected dataset (artifacts, comments,
+   * reviews, releases, contributors) and computed health metrics.
    * @param id - Repository record ID
    */
   async getRepository(id: string) {
-    return request<{ repository: RepositoryDetail }>(`/repositories/${encodeURIComponent(id)}`);
+    return request<{ repository: RepositoryDetail; metrics: HealthMetrics }>(`/repositories/${encodeURIComponent(id)}`);
   },
 
   /**

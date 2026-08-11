@@ -46,6 +46,115 @@
   gap: var(--space-3);
 }
 
+.repo-detail-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.repo-detail-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 0.5px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+}
+
+.metric-value {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semi);
+  color: var(--text-primary);
+}
+
+.metric-label {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.artifact-stats {
+  font-family: var(--font-mono);
+}
+
+.artifact-labels {
+  display: inline-flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.detail-row {
+  border: 0.5px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.detail-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.detail-tag {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-semi);
+}
+
+.detail-body {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+}
+
+.contributor-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.contributor-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 0.5px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  flex-wrap: wrap;
+}
+
+.contributor-rank {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.contributor-login {
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
 .artifact-list {
   display: flex;
   flex-direction: column;

@@ -15,6 +15,8 @@ export interface ScrapedRepository {
   starsCount?: number;
   forksCount?: number;
   language?: string;
+  license?: string;
+  topics?: string[];
 }
 
 export interface ScrapedIssue {
@@ -74,6 +76,13 @@ export function scrapeRepository(): ScrapedRepository | null {
   const languageElement = document.querySelector('[itemprop="programmingLanguage"]');
   const language = languageElement?.textContent?.trim();
 
+  const licenseElement = document.querySelector('a[href*="/license"]');
+  const license = licenseElement?.textContent?.trim().replace(/\s+license$/i, '');
+
+  const topics = Array.from(document.querySelectorAll('.topic-tag, [data-testid="topic-tag"]'))
+    .map((tag) => tag.textContent?.trim())
+    .filter((text): text is string => !!text && !text.startsWith('#'));
+
   const isPrivate = document.body.innerHTML.includes('private') && document.body.innerHTML.includes('visibility');
   const isFork = Array.from(document.querySelectorAll('a, span, p')).some(
     (el) => el.textContent?.trim().toLowerCase().startsWith('forked from')
@@ -89,6 +98,8 @@ export function scrapeRepository(): ScrapedRepository | null {
     isFork,
     ...stats,
     language: language || undefined,
+    license: license || undefined,
+    topics: topics.length > 0 ? topics : undefined,
   };
 }
 
