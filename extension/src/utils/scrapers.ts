@@ -138,8 +138,8 @@ export function scrapeIssue(): ScrapedIssue | null {
     author,
     body,
     labels: labels.length > 0 ? labels : undefined,
-    createdAt,
-    updatedAt,
+    createdAt: createdAt ?? undefined,
+    updatedAt: updatedAt ?? undefined,
     url: window.location.href,
   };
 }
@@ -226,7 +226,7 @@ export function scrapeCommit(): ScrapedCommit | null {
     author,
     message,
     url: window.location.href,
-    timestamp,
+    timestamp: timestamp ?? undefined,
   };
 }
 
@@ -333,7 +333,7 @@ export function scrapeCommitsList(): ScrapedCommit[] {
       sha,
       title,
       url: linkElement.getAttribute('href') || '',
-      timestamp,
+      timestamp: timestamp ?? undefined,
     });
   });
 

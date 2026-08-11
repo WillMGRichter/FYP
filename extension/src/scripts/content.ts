@@ -17,7 +17,7 @@ interface MessageToPopup {
 }
 
 chrome.runtime.onMessage.addListener(
-  (message: MessageFromPopup, sender, sendResponse: (response: MessageToPopup) => void) => {
+  (message: MessageFromPopup, _sender, sendResponse: (response: MessageToPopup) => void) => {
     console.log('[Content Script] Received message:', message);
 
     if (message.type === 'scrape') {
