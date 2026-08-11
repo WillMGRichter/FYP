@@ -21,6 +21,12 @@ pnpm build
 2. Go to "Settings"
 3. Enter backend URL: `http://localhost:3000`
 4. Generate token from web app account settings
+   Grab the token:
+- DevTools → Application → Local Storage → http://localhost:3000 → copy gitresearch_session_token, or
+- hit the API directly:
+curl -X POST http://localhost:3000/api/auth/login -H "Content-Type: application/json" -d "{\"email\":\"you@example.com\",\"password\":\"yourpass\"}"
+and copy session.token from the response.
+3. Paste it into the extension settings. Backend URL should be http://localhost:3000 (not the /api path).
 5. Paste token in "Auth Token" field
 6. Click "Save Settings"
 
