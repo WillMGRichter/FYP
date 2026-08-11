@@ -75,7 +75,9 @@ export function scrapeRepository(): ScrapedRepository | null {
   const language = languageElement?.textContent?.trim();
 
   const isPrivate = document.body.innerHTML.includes('private') && document.body.innerHTML.includes('visibility');
-  const isFork = document.querySelector('span:has-text("forked from")') !== null;
+  const isFork = Array.from(document.querySelectorAll('a, span, p')).some(
+    (el) => el.textContent?.trim().toLowerCase().startsWith('forked from')
+  );
 
   return {
     fullName,
