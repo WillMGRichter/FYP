@@ -14,28 +14,28 @@
     "https://api.github.com/*"
   ],
   "background": {
-    "service_worker": "dist/background.js"
+    "service_worker": "background.js"
   },
   "content_scripts": [
     {
       "matches": [
         "https://github.com/*"
       ],
-      "js": ["dist/content.js"],
+      "js": ["content.js"],
       "run_at": "document_start"
     }
   ],
   "action": {
-    "default_popup": "dist/popup.html",
+    "default_popup": "popup.html",
     "default_icon": {
-      "16": "public/icon-16.png",
-      "48": "public/icon-48.png",
-      "128": "public/icon-128.png"
+      "16": "icon-16.png",
+      "48": "icon-48.png",
+      "128": "icon-128.png"
     }
   },
   "icons": {
-    "16": "public/icon-16.png",
-    "48": "public/icon-48.png",
-    "128": "public/icon-128.png"
+    "16": "icon-16.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
   }
 }
