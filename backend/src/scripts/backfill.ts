@@ -19,7 +19,6 @@ function hashPayload(payload: unknown): string {
   return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
 
-// what is T?
 async function fetchAllPages<T>(url: string): Promise<T[]> {
     const results: T[] = [];
     let nextUrl: string | null = url;
@@ -29,7 +28,6 @@ async function fetchAllPages<T>(url: string): Promise<T[]> {
             headers: {
                 Authorization: `Bearer ${GITHUB_TOKEN_SECRET}`,
                 Accept: 'application/vnd.github+json',
-                // what is application/vnd.github+json?
             },
         });
     
@@ -184,10 +182,7 @@ async function recordSnapshot(params: {
 }
 
 
-/**
- * Fetch and persist all commits for a repo
- */
-
+// Fetch and persist all commits for a repo
 async function backfillCommits(owner:string, repo:string, repositoryId: string) {
     const commits = await fetchAllPages<any>(`${BASE}/repos/${owner}/${repo}/commits?per_page=100`);
  
@@ -214,6 +209,80 @@ async function backfillCommits(owner:string, repo:string, repositoryId: string) 
   console.log(`Backfilled ${commits.length} commits`);
 }
 
+async function backfillIssues(owner: string, repo: string, repositoryId: string) {
+  const issues = await fetchAllPages<any>(`${BASE}/repos/${owner}/${repo}/issues?state=all&per_page=100`);
+  const trueIssues = issues.filter((i) => !i.pull_request);
+ 
+  for (const i of trueIssues) {
+    await recordSnapshot({
+      repositoryId,
+      type: 'ISSUE',
+      githubNodeId: i.node_id,
+      githubNumber: i.number,
+      title: i.title,
+      state: i.state,
+      authorLogin: i.user?.login ?? null,
+      htmlUrl: i.html_url,
+      closedAt: i.closed_at,
+      githubCreatedAt: i.created_at,
+      githubUpdatedAt: i.updated_at,
+      payload: {
+        number: i.number,
+        title: i.title,
+        state: i.state,
+        author: i.user?.login,
+        body: i.body,
+        labels: i.labels.map((l: any) => (typeof l === 'string' ? l : l.name)),
+        createdAt: i.created_at,
+        updatedAt: i.updated_at,
+        url: i.html_url,
+      },
+    });
+  }
+ 
+  console.log(`Backfilled ${trueIssues.length} issues`);
+}
+ 
+async function backfillPullRequests(owner: string, repo: string, repositoryId: string) {
+  const prList = await fetchAllPages<any>(`${BASE}/repos/${owner}/${repo}/pulls?state=all&per_page=100`);
+ 
+  for (const p of prList) {
+    const detail = await fetchJson<any>(`${BASE}/repos/${owner}/${repo}/pulls/${p.number}`);
+ 
+    await recordSnapshot({
+      repositoryId,
+      type: 'PULL_REQUEST',
+      githubNodeId: p.node_id,
+      githubNumber: p.number,
+      title: p.title,
+      state: p.state,
+      authorLogin: p.user?.login ?? null,
+      htmlUrl: p.html_url,
+      mergedAt: p.merged_at,
+      closedAt: p.closed_at,
+      githubCreatedAt: p.created_at,
+      githubUpdatedAt: p.updated_at,
+      payload: {
+        number: p.number,
+        title: p.title,
+        state: p.state,
+        author: p.user?.login,
+        body: p.body,
+        labels: p.labels.map((l: any) => l.name),
+        createdAt: p.created_at,
+        updatedAt: p.updated_at,
+        url: p.html_url,
+        isDraft: p.draft,
+        changedFiles: detail.changed_files,
+        additions: detail.additions,
+        deletions: detail.deletions,
+        commentsCount: detail.comments,
+      },
+    });
+  }
+ 
+  console.log(`Backfilled ${prList.length} pull requests`);
+}
 
 async function main() {
     const target = process.argv[2]; // get owner/repo from command line
