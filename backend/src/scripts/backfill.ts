@@ -295,6 +295,8 @@ async function main() {
     console.log(`Repository ${repository.fullName} ready (id: ${repository.id})`);
     
     await backfillCommits(owner, repo, repository.id)
+    await backfillIssues(owner, repo, repository.id)
+    await backfillPullRequests(owner, repo, repository.id)
     
     await prisma.$disconnect();
 }
@@ -303,3 +305,6 @@ main().catch((err) => {
     console.error(err);
     process.exit(1);
 })
+
+// usage: pnpm exec tsx src/scripts/backfill.ts <owner>/<repo>
+// need to install tsx via pnpm add -D tsx
