@@ -26,18 +26,60 @@ enum CollectionStatus {
   FAILED
 }
 
+// Classifies what a snapshot actually contains so exports/UI/AI features can
+// branch on it instead of guessing.
+enum DataSensitivity {
+  PUBLIC
+  CONTAINS_PII
+  SENSITIVE_SECURITY // vulnerability reports, security advisories
+  RESTRICTED // org-internal / access-controlled content
+}
+
+// What the collecting account could actually see at capture time. A
+// PRIVATE_AUTHENTICATED snapshot came through the extension via a logged-in
+// session and must never be treated as public/redistributable.
+enum CaptureVisibility {
+  PUBLIC
+  PRIVATE_AUTHENTICATED
+  ORG_INTERNAL
+}
+
+// Why a given collection run is allowed to happen at all.
+enum LegalBasis {
+  PUBLIC_TASK_RESEARCH // Monash HREC-approved research use of public data
+  LEGITIMATE_INTEREST
+  CONSENT
+}
+
+// GDPR Art. 15/16/17/21-style request lifecycle.
+enum SubjectRequestType {
+  ACCESS
+  ERASURE
+  RECTIFICATION
+  OBJECTION
+}
+
+enum SubjectRequestStatus {
+  RECEIVED
+  IN_REVIEW
+  COMPLETED
+  REJECTED
+}
+
 model Account {
-  id               String                @id @default(cuid())
-  email            String                @unique
-  displayName      String
-  passwordHash     String
-  createdAt        DateTime              @default(now())
-  updatedAt        DateTime              @updatedAt
-  sessions         AccountSession[]
-  githubTokens     GitHubToken[]
-  collectionRuns   CollectionRun[]
-  starredRepos     StarredRepository[]
-  contributions    AccountContribution[]
+  id              String                @id @default(cuid())
+  email           String                @unique
+  displayName     String
+  passwordHash    String
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  sessions        AccountSession[]
+  githubTokens    GitHubToken[]
+  collectionRuns  CollectionRun[]
+  starredRepos    StarredRepository[]
+  contributions   AccountContribution[]
+  subjectRequests DataSubjectRequest[]
+  auditLogs       AuditLog[]
 }
 
 model AccountSession {
@@ -53,123 +95,147 @@ model AccountSession {
 }
 
 model GitHubToken {
-  id             String          @id @default(cuid())
-  accountId      String?
-  label          String
-  githubLogin    String?
-  githubUserId   BigInt?
-  encryptedToken String
-  tokenPreview   String
-  scopes         String[]
-  rateLimit      Int?
-  rateRemaining  Int?
-  rateResetAt    DateTime?
-  lastValidatedAt DateTime?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  account        Account?        @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  collectionRuns CollectionRun[]
+  id                String          @id @default(cuid())
+  accountId         String?
+  label             String
+  githubLogin       String?
+  githubUserId      BigInt?
+  encryptedToken    String
+  tokenPreview      String
+  scopes            String[]
+  rateLimit         Int?
+  rateRemaining     Int?
+  rateResetAt       DateTime?
+  lastValidatedAt   DateTime?
+  consentAcceptedAt DateTime? // account holder acknowledged collection scope
+  revokedAt         DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  account           Account?        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  collectionRuns    CollectionRun[]
 
   @@index([accountId])
   @@index([githubLogin])
 }
 
 model Repository {
-  id               String           @id @default(cuid())
-  githubId         BigInt           @unique
-  owner            String
-  name             String
-  fullName         String           @unique
-  htmlUrl          String
-  description      String?
-  defaultBranch    String?
-  isPrivate        Boolean          @default(false)
-  isFork           Boolean          @default(false)
-  language         String?
-  stars            Int              @default(0)
-  forks            Int              @default(0)
-  openIssues       Int              @default(0)
-  pushedAt         DateTime?
-  githubCreatedAt  DateTime?
-  githubUpdatedAt  DateTime?
-  collectedAt      DateTime         @default(now())
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  artifacts        RepositoryArtifact[]
-  snapshots        EntitySnapshot[]
-  collectionRuns   CollectionRun[]
-  starredBy        StarredRepository[]
-  contributions    AccountContribution[]
+  id              String                @id @default(cuid())
+  githubId        BigInt                @unique
+  owner           String
+  name            String
+  fullName        String                @unique
+  htmlUrl         String
+  description     String?
+  defaultBranch   String?
+  isPrivate       Boolean               @default(false)
+  isFork          Boolean               @default(false)
+  language        String?
+  licenseSpdxId   String? // intellectual property — what this data can be used/redistributed for
+  licenseName     String?
+  stars           Int                   @default(0)
+  forks           Int                   @default(0)
+  openIssues      Int                   @default(0)
+  pushedAt        DateTime?
+  githubCreatedAt DateTime?
+  githubUpdatedAt DateTime?
+  collectedAt     DateTime              @default(now())
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  artifacts       RepositoryArtifact[]
+  snapshots       EntitySnapshot[]
+  collectionRuns  CollectionRun[]
+  starredBy       StarredRepository[]
+  contributions   AccountContribution[]
 
   @@index([owner, name])
   @@index([language])
 }
 
 model RepositoryArtifact {
-  id              String           @id @default(cuid())
-  repositoryId    String
-  type            GitHubEntityType
-  githubNodeId    String?
-  githubNumber    Int?
-  githubSha       String?
-  title           String?
-  state           String?
-  authorLogin     String?
-  htmlUrl         String?
-  mergedAt        DateTime?
-  closedAt        DateTime?
-  githubCreatedAt DateTime?
-  githubUpdatedAt DateTime?
-  collectedAt     DateTime         @default(now())
-  repository      Repository       @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-  snapshots       EntitySnapshot[]
+  id                  String               @id @default(cuid())
+  repositoryId        String
+  type                GitHubEntityType
+  githubNodeId        String?
+  githubNumber        Int?
+  githubSha           String?
+  title               String?
+  state               String?
+  authorLogin         String? // kept for display
+  authorContributorId String? // governance/erasure joins go through this, not the raw login
+  isSecurityAdvisory  Boolean              @default(false) // vulnerability/security-sensitive content
+  htmlUrl             String?
+  mergedAt            DateTime?
+  closedAt            DateTime?
+  githubCreatedAt     DateTime?
+  githubUpdatedAt     DateTime?
+  collectedAt         DateTime             @default(now())
+  repository          Repository           @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  author              ContributorIdentity? @relation(fields: [authorContributorId], references: [id])
+  snapshots           EntitySnapshot[]
 
   @@unique([repositoryId, type, githubNodeId])
   @@index([repositoryId, type])
   @@index([authorLogin])
+  @@index([authorContributorId])
 }
 
 model EntitySnapshot {
-  id              String              @id @default(cuid())
-  repositoryId    String
-  artifactId      String?
-  entityType      GitHubEntityType
-  source          String
-  payload         Json
-  payloadHash     String
-  capturedAt      DateTime            @default(now())
-  collectionRunId String?
-  repository      Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-  artifact        RepositoryArtifact? @relation(fields: [artifactId], references: [id], onDelete: Cascade)
-  collectionRun   CollectionRun?      @relation(fields: [collectionRunId], references: [id], onDelete: SetNull)
+  id                  String              @id @default(cuid())
+  repositoryId        String
+  artifactId          String?
+  entityType          GitHubEntityType
+  source              String
+  payload             Json
+  payloadHash         String
+  sensitivity         DataSensitivity     @default(PUBLIC)
+  containsPii         Boolean             @default(false)
+  visibilityAtCapture CaptureVisibility   @default(PUBLIC)
+  // Erasure scrubs PII out of `payload` in place rather than deleting the
+  // row, so the structural snapshot survives for reproducibility while the
+  // personal content doesn't.
+  redacted            Boolean             @default(false)
+  redactedAt          DateTime?
+  redactedFields      String[]            @default([])
+  retentionExpiresAt  DateTime? // drives a scheduled purge job
+  capturedAt          DateTime            @default(now())
+  collectionRunId     String?
+  repository          Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  artifact            RepositoryArtifact? @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  collectionRun       CollectionRun?      @relation(fields: [collectionRunId], references: [id], onDelete: SetNull)
 
   @@unique([repositoryId, artifactId, entityType, payloadHash])
   @@index([repositoryId, entityType])
   @@index([capturedAt])
+  @@index([sensitivity])
+  @@index([retentionExpiresAt])
 }
 
 model CollectionRun {
-  id            String           @id @default(cuid())
-  accountId     String?
-  repositoryId  String?
-  tokenId       String?
-  status        CollectionStatus @default(PENDING)
-  source        String           @default("github_api")
-  requestedBy   String?
-  startedAt     DateTime         @default(now())
-  completedAt   DateTime?
-  errorMessage  String?
-  issuesCount   Int              @default(0)
-  pullsCount    Int              @default(0)
-  commitsCount  Int              @default(0)
-  account       Account?         @relation(fields: [accountId], references: [id], onDelete: SetNull)
-  repository    Repository?      @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
-  token         GitHubToken?     @relation(fields: [tokenId], references: [id], onDelete: SetNull)
-  snapshots     EntitySnapshot[]
+  id               String           @id @default(cuid())
+  accountId        String?
+  repositoryId     String?
+  tokenId          String?
+  status           CollectionStatus @default(PENDING)
+  source           String           @default("github_api")
+  requestedBy      String?
+  ethicsApprovalId String?
+  legalBasis       LegalBasis?      @default(PUBLIC_TASK_RESEARCH)
+  startedAt        DateTime         @default(now())
+  completedAt      DateTime?
+  errorMessage     String?
+  issuesCount      Int              @default(0)
+  pullsCount       Int              @default(0)
+  commitsCount     Int              @default(0)
+  account          Account?         @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  repository       Repository?      @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
+  token            GitHubToken?     @relation(fields: [tokenId], references: [id], onDelete: SetNull)
+  ethicsApproval   EthicsApproval?  @relation(fields: [ethicsApprovalId], references: [id])
+  snapshots        EntitySnapshot[]
 
   @@index([accountId])
   @@index([status])
   @@index([startedAt])
+  @@index([ethicsApprovalId])
 }
 
 model StarredRepository {
@@ -201,4 +267,79 @@ model AccountContribution {
   @@unique([accountId, repositoryId, githubLogin])
   @@index([accountId])
   @@index([githubLogin])
+}
+
+// Every CollectionRun traces back to an approved research protocol instead
+// of being an open-ended scrape. Also carries the retention period that
+// data-minimisation purge jobs read from.
+model EthicsApproval {
+  id                  String          @id @default(cuid())
+  referenceCode       String          @unique // e.g. Monash HREC approval number
+  title               String
+  purpose             String
+  approvedAt          DateTime
+  expiresAt           DateTime?
+  retentionPeriodDays Int?
+  collectionRuns      CollectionRun[]
+
+  @@index([expiresAt])
+}
+
+// Separates a contributor's real GitHub identity from the pseudonymous id
+// used in exported/research-facing datasets. Lets an erasure or opt-out
+// request be honoured for a contributor who was never a user of this
+// platform (they can't log in and delete their own Account).
+model ContributorIdentity {
+  id               String    @id @default(cuid())
+  pseudonymId      String    @unique @default(cuid())
+  githubLogin      String    @unique
+  githubUserId     BigInt?   @unique
+  optedOut         Boolean   @default(false)
+  optedOutAt       DateTime?
+  erasureRequested Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  artifacts       RepositoryArtifact[]
+  subjectRequests DataSubjectRequest[]
+
+  @@index([optedOut])
+}
+
+// GDPR Art. 15/16/17/21-style request/response record — shows due process
+// rather than a deletion flag flipped silently.
+model DataSubjectRequest {
+  id                    String               @id @default(cuid())
+  contributorIdentityId String?
+  accountId             String?
+  requestType           SubjectRequestType
+  status                SubjectRequestStatus @default(RECEIVED)
+  requestedVia          String // e.g. "email", "github issue", "form"
+  details               String?
+  receivedAt            DateTime             @default(now())
+  resolvedAt            DateTime?
+  resolutionNotes       String?
+
+  contributor ContributorIdentity? @relation(fields: [contributorIdentityId], references: [id])
+  account     Account?             @relation(fields: [accountId], references: [id])
+
+  @@index([status])
+  @@index([contributorIdentityId])
+}
+
+// Accountability trail for who touched sensitive/export-grade data and why.
+model AuditLog {
+  id         String   @id @default(cuid())
+  accountId  String?
+  action     String // e.g. "EXPORT_DATASET", "VIEW_SNAPSHOT", "REDACT_SNAPSHOT"
+  targetType String // e.g. "EntitySnapshot", "Repository"
+  targetId   String?
+  purpose    String?
+  createdAt  DateTime @default(now())
+
+  account Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@index([accountId])
+  @@index([action])
+  @@index([createdAt])
 }
