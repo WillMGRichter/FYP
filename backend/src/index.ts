@@ -681,11 +681,239 @@ app.get<{ Params: { id: string }; Querystring: { format?: string } }>(
   },
 );
 
-/** List all repositories in the snapshot store with counts and star status. */
-app.get(`${API_PREFIX}/repositories`, async (request) => {
-  const account = await getOptionalAccount(request);
+type FilteredExportPayload = {
+  language?: string;
+  minStars?: number;
+  maxStars?: number;
+  minForks?: number;
+  maxForks?: number;
+  search?: string;
+  entityTypes?: ('REPOSITORY' | 'ISSUE' | 'PULL_REQUEST' | 'COMMIT')[];
+  sources?: string[];
+  format?: 'json' | 'csv';
+};
+
+/** Filtered export: download data across multiple repositories matching filter criteria. */
+app.post<{ Body: FilteredExportPayload }>(`${API_PREFIX}/export`, async (request, reply) => {
+  const { language, minStars, maxStars, minForks, maxForks, search, entityTypes, sources, format } = request.body;
+
+  const where: Record<string, unknown> = {};
+  if (language) where.language = language;
+  if (minStars != null) where.stars = { ...((where.stars as Record<string, unknown>) ?? {}), gte: minStars };
+  if (maxStars != null) where.stars = { ...((where.stars as Record<string, unknown>) ?? {}), lte: maxStars };
+  if (minForks != null) where.forks = { ...((where.forks as Record<string, unknown>) ?? {}), gte: minForks };
+  if (maxForks != null) where.forks = { ...((where.forks as Record<string, unknown>) ?? {}), lte: maxForks };
+  if (search) {
+    where.OR = [
+      { fullName: { contains: search, mode: 'insensitive' } },
+      { description: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+
   const repositories = await prisma.repository.findMany({
+    where,
     orderBy: { updatedAt: 'desc' },
+  });
+
+  if (repositories.length === 0) {
+    return reply.code(404).send({ error: 'No repositories match the given filters.' });
+  }
+
+  const repoIds = repositories.map((r) => r.id);
+  const artifactTypeFilter = entityTypes && entityTypes.length > 0
+    ? entityTypes.filter((t): t is 'ISSUE' | 'PULL_REQUEST' | 'COMMIT' => t !== 'REPOSITORY')
+    : undefined;
+
+  const artifacts = await prisma.repositoryArtifact.findMany({
+    where: {
+      repositoryId: { in: repoIds },
+      ...(artifactTypeFilter ? { type: { in: artifactTypeFilter } } : {}),
+    },
+    include: {
+      snapshots: {
+        orderBy: { capturedAt: 'desc' },
+        select: {
+          id: true,
+          source: true,
+          capturedAt: true,
+          payload: true,
+          entityType: true,
+        },
+      },
+    },
+    orderBy: [{ repositoryId: 'asc' }, { type: 'asc' }, { githubNumber: 'asc' }],
+  });
+
+  const repoSnapshots = (entityTypes == null || entityTypes.includes('REPOSITORY'))
+    ? await prisma.entitySnapshot.findMany({
+        where: {
+          repositoryId: { in: repoIds },
+          artifactId: null,
+          ...(sources ? { source: { in: sources } } : {}),
+        },
+        orderBy: { capturedAt: 'desc' },
+        select: {
+          id: true,
+          repositoryId: true,
+          source: true,
+          capturedAt: true,
+          payload: true,
+          entityType: true,
+        },
+      })
+    : [];
+
+  const repoMap = new Map(repositories.map((r) => [r.id, r]));
+
+  const filterSnapshotSources = <T extends { source: string }>(snapshots: T[]) =>
+    sources && sources.length > 0 ? snapshots.filter((s) => sources.includes(s.source)) : snapshots;
+
+  const exportRows: unknown[] = [];
+
+  for (const artifact of artifacts) {
+    const repo = repoMap.get(artifact.repositoryId);
+    const filteredSnapshots = filterSnapshotSources(artifact.snapshots);
+    if (filteredSnapshots.length === 0) continue;
+
+    for (const snapshot of filteredSnapshots) {
+      exportRows.push({
+        repositoryFullName: repo?.fullName ?? null,
+        repositoryLanguage: repo?.language ?? null,
+        repositoryStars: repo?.stars ?? 0,
+        entityType: snapshot.entityType,
+        source: snapshot.source,
+        githubNumber: artifact.githubNumber,
+        githubSha: artifact.githubSha,
+        title: artifact.title,
+        state: artifact.state,
+        authorLogin: artifact.authorLogin,
+        htmlUrl: artifact.htmlUrl,
+        capturedAt: snapshot.capturedAt,
+        payload: snapshot.payload,
+      });
+    }
+  }
+
+  for (const snapshot of repoSnapshots) {
+    const repo = repoMap.get(snapshot.repositoryId);
+    const filteredSnapshots = sources && sources.length > 0 ? [snapshot] : [snapshot];
+    if (filteredSnapshots.length === 0) continue;
+
+    exportRows.push({
+      repositoryFullName: repo?.fullName ?? null,
+      repositoryLanguage: repo?.language ?? null,
+      repositoryStars: repo?.stars ?? 0,
+      entityType: snapshot.entityType,
+      source: snapshot.source,
+      githubNumber: null,
+      githubSha: null,
+      title: repo?.fullName ?? null,
+      state: null,
+      authorLogin: null,
+      htmlUrl: repo?.htmlUrl ?? null,
+      capturedAt: snapshot.capturedAt,
+      payload: snapshot.payload,
+    });
+  }
+
+  const filename = `filtered-export-${repositories.length}-repos`;
+
+  if (format === 'csv') {
+    const header = 'repositoryFullName,repositoryLanguage,repositoryStars,entityType,source,githubNumber,githubSha,title,state,authorLogin,htmlUrl,capturedAt,payload';
+    const rows = [header];
+    for (const row of exportRows) {
+      const r = row as Record<string, unknown>;
+      rows.push(
+        ([
+          r.repositoryFullName,
+          r.repositoryLanguage,
+          r.repositoryStars,
+          r.entityType,
+          r.source,
+          r.githubNumber,
+          r.githubSha,
+          r.title,
+          r.state,
+          r.authorLogin,
+          r.htmlUrl,
+          (r.capturedAt as Date).toISOString(),
+          JSON.stringify(r.payload),
+        ] as (string | number | null | undefined)[])
+          .map(csvCell)
+          .join(','),
+      );
+    }
+
+    reply.header('Content-Type', 'text/csv; charset=utf-8');
+    reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
+    return reply.send(rows.join('\n'));
+  }
+
+  reply.header('Content-Type', 'application/json; charset=utf-8');
+  reply.header('Content-Disposition', `attachment; filename="${filename}.json"`);
+  return reply.send(
+    JSON.stringify(
+      jsonForResponse({
+        exportedAt: new Date().toISOString(),
+        filters: { language, minStars, maxStars, minForks, maxForks, search, entityTypes, sources },
+        repositoryCount: repositories.length,
+        rowCount: exportRows.length,
+        rows: exportRows,
+      }),
+      null,
+      2,
+    ),
+  );
+});
+
+type RepositoryQuerystring = {
+  language?: string;
+  minStars?: string;
+  maxStars?: string;
+  minForks?: string;
+  maxForks?: string;
+  search?: string;
+  sort?: string;
+  order?: string;
+};
+
+/** List all repositories in the snapshot store with counts and star status. */
+app.get<{ Querystring: RepositoryQuerystring }>(`${API_PREFIX}/repositories`, async (request, reply) => {
+  const account = await getOptionalAccount(request);
+  const { language, minStars, maxStars, minForks, maxForks, search, sort, order } = request.query;
+
+  const where: Record<string, unknown> = {};
+
+  if (language) {
+    where.language = language;
+  }
+  if (minStars != null) {
+    where.stars = { ...((where.stars as Record<string, unknown>) ?? {}), gte: Number(minStars) };
+  }
+  if (maxStars != null) {
+    where.stars = { ...((where.stars as Record<string, unknown>) ?? {}), lte: Number(maxStars) };
+  }
+  if (minForks != null) {
+    where.forks = { ...((where.forks as Record<string, unknown>) ?? {}), gte: Number(minForks) };
+  }
+  if (maxForks != null) {
+    where.forks = { ...((where.forks as Record<string, unknown>) ?? {}), lte: Number(maxForks) };
+  }
+  if (search) {
+    where.OR = [
+      { fullName: { contains: search, mode: 'insensitive' } },
+      { description: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+
+  const sortField = ['stars', 'forks', 'openIssues', 'updatedAt', 'createdAt', 'fullName'].includes(sort ?? '')
+    ? sort!
+    : 'updatedAt';
+  const sortOrder = order === 'asc' ? 'asc' : 'desc';
+
+  const repositories = await prisma.repository.findMany({
+    where,
+    orderBy: { [sortField]: sortOrder },
     include: {
       _count: {
         select: {
@@ -706,6 +934,13 @@ app.get(`${API_PREFIX}/repositories`, async (request) => {
     },
   });
 
+  const distinctLanguages = await prisma.repository.findMany({
+    where: { language: { not: null } },
+    select: { language: true },
+    distinct: ['language'],
+    orderBy: { language: 'asc' },
+  });
+
   return jsonForResponse({
     repositories: repositories.map((repository) => ({
       ...repository,
@@ -713,6 +948,7 @@ app.get(`${API_PREFIX}/repositories`, async (request) => {
       star: repository.starredBy[0] ?? null,
       starredBy: undefined,
     })),
+    availableLanguages: distinctLanguages.map((r) => r.language).filter(Boolean),
   });
 });
 

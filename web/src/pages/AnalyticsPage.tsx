@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { PageTitle, SectionHeading, Text, Caption, Link } from '../components/ui/Typography';
+import { PageTitle, SectionHeading, Text, Caption } from '../components/ui/Typography';
 import { Card } from '../components/ui/Layout';
 import { Badge } from '../components/ui/Badge';
 import { Alert, EmptyState, Spinner } from '../components/ui/Feedback';
@@ -43,7 +43,7 @@ function BarRow({ label, value, max, accent }: { label: string; value: number; m
 /**
  * Render a year-based timeline as simple bars.
  */
-function TimelineChart({ data, label }: { data: { year: string; count: number }[]; label: string }) {
+function TimelineChart({ data }: { data: { year: string; count: number }[] }) {
   if (data.length === 0) return <Caption>No data available.</Caption>;
   const max = Math.max(...data.map((d) => d.count));
   return (
@@ -252,19 +252,19 @@ export default function AnalyticsPage() {
         <div className="analytics-timeline-grid">
           <Card>
             <SectionHeading subtitle="Repositories created per year.">Repositories</SectionHeading>
-            <TimelineChart data={temporal.repositoriesByYear} label="Repositories by year" />
+            <TimelineChart data={temporal.repositoriesByYear} />
           </Card>
           <Card>
             <SectionHeading subtitle="Issues created per year.">Issues</SectionHeading>
-            <TimelineChart data={temporal.issuesByYear} label="Issues by year" />
+            <TimelineChart data={temporal.issuesByYear} />
           </Card>
           <Card>
             <SectionHeading subtitle="Pull requests created per year.">Pull Requests</SectionHeading>
-            <TimelineChart data={temporal.pullRequestsByYear} label="PRs by year" />
+            <TimelineChart data={temporal.pullRequestsByYear} />
           </Card>
           <Card>
             <SectionHeading subtitle="Commits created per year.">Commits</SectionHeading>
-            <TimelineChart data={temporal.commitsByYear} label="Commits by year" />
+            <TimelineChart data={temporal.commitsByYear} />
           </Card>
         </div>
       </section>

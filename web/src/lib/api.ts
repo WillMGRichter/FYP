@@ -226,8 +226,27 @@ export const api = {
   },
 
   /** List all repositories in the snapshot store. */
-  async listRepositories() {
-    return request<{ repositories: Repository[] }>('/repositories');
+  async listRepositories(filters?: {
+    language?: string;
+    minStars?: number;
+    maxStars?: number;
+    minForks?: number;
+    maxForks?: number;
+    search?: string;
+    sort?: string;
+    order?: 'asc' | 'desc';
+  }) {
+    const params = new URLSearchParams();
+    if (filters?.language) params.set('language', filters.language);
+    if (filters?.minStars != null) params.set('minStars', String(filters.minStars));
+    if (filters?.maxStars != null) params.set('maxStars', String(filters.maxStars));
+    if (filters?.minForks != null) params.set('minForks', String(filters.minForks));
+    if (filters?.maxForks != null) params.set('maxForks', String(filters.maxForks));
+    if (filters?.search) params.set('search', filters.search);
+    if (filters?.sort) params.set('sort', filters.sort);
+    if (filters?.order) params.set('order', filters.order);
+    const qs = params.toString();
+    return request<{ repositories: Repository[]; availableLanguages: string[] }>(`/repositories${qs ? `?${qs}` : ''}`);
   },
 
   /**
@@ -307,6 +326,45 @@ export const api = {
   /** Fetch aggregated analytics across all repositories for MSR research. */
   async getAnalytics() {
     return request<Analytics>('/analytics');
+  },
+
+  /**
+   * Export filtered data across multiple repositories as a JSON or CSV file.
+   * @param filters - Repository and entity filters
+   * @param format - Export format (json or csv)
+   */
+  async filteredExport(
+    filters: {
+      language?: string;
+      minStars?: number;
+      maxStars?: number;
+      minForks?: number;
+      maxForks?: number;
+      search?: string;
+      entityTypes?: ('REPOSITORY' | 'ISSUE' | 'PULL_REQUEST' | 'COMMIT')[];
+      sources?: string[];
+    },
+    format: 'json' | 'csv',
+  ) {
+    const sessionToken = sessionStore.get();
+    const response = await fetch(
+      `${API_BASE_URL}/export?format=${format}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+        },
+        body: JSON.stringify({ ...filters, format }),
+      },
+    );
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error ?? `Export failed with status ${response.status}`);
+    }
+
+    return response.blob();
   },
 };
 
