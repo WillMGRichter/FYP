@@ -1315,9 +1315,25 @@ app.get(`${API_PREFIX}/account/contributions`, async (request, reply) => {
   return jsonForResponse({ contributions });
 });
 
-/** Aggregate analytics across all repositories for MSR research. */
-app.get(`${API_PREFIX}/analytics`, async () => {
+/** Aggregate analytics across repositories for MSR research, with optional filters. */
+app.get<{ Querystring: RepositoryQuerystring }>(`${API_PREFIX}/analytics`, async (request) => {
+  const { language, minStars, maxStars, minForks, maxForks, search } = request.query;
+
+  const where: Record<string, unknown> = {};
+  if (language) where.language = language;
+  if (minStars != null) where.stars = { ...((where.stars as Record<string, unknown>) ?? {}), gte: Number(minStars) };
+  if (maxStars != null) where.stars = { ...((where.stars as Record<string, unknown>) ?? {}), lte: Number(maxStars) };
+  if (minForks != null) where.forks = { ...((where.forks as Record<string, unknown>) ?? {}), gte: Number(minForks) };
+  if (maxForks != null) where.forks = { ...((where.forks as Record<string, unknown>) ?? {}), lte: Number(maxForks) };
+  if (search) {
+    where.OR = [
+      { fullName: { contains: search, mode: 'insensitive' } },
+      { description: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+
   const repositories = await prisma.repository.findMany({
+    where,
     select: {
       id: true,
       language: true,
@@ -1330,23 +1346,34 @@ app.get(`${API_PREFIX}/analytics`, async () => {
     },
   });
 
-  const artifacts = await prisma.repositoryArtifact.findMany({
-    select: {
-      type: true,
-      state: true,
-      authorLogin: true,
-      repositoryId: true,
-      githubCreatedAt: true,
-    },
-  });
+  const repoIds = repositories.map((r) => r.id);
 
-  const snapshots = await prisma.entitySnapshot.findMany({
-    select: {
-      entityType: true,
-      source: true,
-      repositoryId: true,
-    },
-  });
+  const [artifacts, snapshots, distinctLanguages] = await Promise.all([
+    prisma.repositoryArtifact.findMany({
+      where: { repositoryId: { in: repoIds } },
+      select: {
+        type: true,
+        state: true,
+        authorLogin: true,
+        repositoryId: true,
+        githubCreatedAt: true,
+      },
+    }),
+    prisma.entitySnapshot.findMany({
+      where: { repositoryId: { in: repoIds } },
+      select: {
+        entityType: true,
+        source: true,
+        repositoryId: true,
+      },
+    }),
+    prisma.repository.findMany({
+      where: { language: { not: null } },
+      select: { language: true },
+      distinct: ['language'],
+      orderBy: { language: 'asc' },
+    }),
+  ]);
 
   // --- Repository overview ---
   const repoCount = repositories.length;
@@ -1485,6 +1512,7 @@ app.get(`${API_PREFIX}/analytics`, async () => {
   return jsonForResponse({
     repositoryOverview: repoOverview,
     languageDistribution,
+    availableLanguages: distinctLanguages.map((r) => r.language).filter(Boolean),
     artifactBreakdown: {
       byType: artifactTypeCounts,
       issues: issueStates,

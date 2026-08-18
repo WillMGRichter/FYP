@@ -323,9 +323,24 @@ export const api = {
     return request<{ contributions: Contribution[] }>('/account/contributions');
   },
 
-  /** Fetch aggregated analytics across all repositories for MSR research. */
-  async getAnalytics() {
-    return request<Analytics>('/analytics');
+  /** Fetch aggregated analytics across repositories for MSR research. */
+  async getAnalytics(filters?: {
+    language?: string;
+    minStars?: number;
+    maxStars?: number;
+    minForks?: number;
+    maxForks?: number;
+    search?: string;
+  }) {
+    const params = new URLSearchParams();
+    if (filters?.language) params.set('language', filters.language);
+    if (filters?.minStars != null) params.set('minStars', String(filters.minStars));
+    if (filters?.maxStars != null) params.set('maxStars', String(filters.maxStars));
+    if (filters?.minForks != null) params.set('minForks', String(filters.minForks));
+    if (filters?.maxForks != null) params.set('maxForks', String(filters.maxForks));
+    if (filters?.search) params.set('search', filters.search);
+    const qs = params.toString();
+    return request<Analytics>(`/analytics${qs ? `?${qs}` : ''}`);
   },
 
   /**
@@ -381,6 +396,7 @@ export type Analytics = {
     openIssues: AnalyticsStat;
   };
   languageDistribution: { language: string; count: number }[];
+  availableLanguages: string[];
   artifactBreakdown: {
     byType: { REPOSITORY: number; ISSUE: number; PULL_REQUEST: number; COMMIT: number };
     issues: { open: number; closed: number };

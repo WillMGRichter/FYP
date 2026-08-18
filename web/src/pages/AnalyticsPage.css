@@ -9,6 +9,24 @@
   text-align: left;
 }
 
+.analytics-filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.analytics-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: flex-end;
+}
+
+.analytics-filter-row > * {
+  flex: 1 1 150px;
+  min-width: 130px;
+}
+
 .analytics-section {
   display: flex;
   flex-direction: column;

@@ -3,9 +3,29 @@ import { PageTitle, SectionHeading, Text, Caption } from '../components/ui/Typog
 import { Card } from '../components/ui/Layout';
 import { Badge } from '../components/ui/Badge';
 import { Alert, EmptyState, Spinner } from '../components/ui/Feedback';
+import { Input, Select } from '../components/ui/Input';
+import { Button } from '../components/ui/Button';
 import { api } from '../lib/api';
 import type { Analytics } from '../lib/api';
 import './AnalyticsPage.css';
+
+type AnalyticsFilters = {
+  language: string;
+  minStars: string;
+  maxStars: string;
+  minForks: string;
+  maxForks: string;
+  search: string;
+};
+
+const defaultFilters: AnalyticsFilters = {
+  language: '',
+  minStars: '',
+  maxStars: '',
+  minForks: '',
+  maxForks: '',
+  search: '',
+};
 
 /**
  * Render a stat card with min/max/median/average.
@@ -63,14 +83,40 @@ export default function AnalyticsPage() {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [filters, setFilters] = useState<AnalyticsFilters>(defaultFilters);
+  const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
+
+  const fetchAnalytics = async (f: AnalyticsFilters) => {
+    setError(null);
+    try {
+      const result = await api.getAnalytics({
+        ...(f.language ? { language: f.language } : {}),
+        ...(f.minStars ? { minStars: Number(f.minStars) } : {}),
+        ...(f.maxStars ? { maxStars: Number(f.maxStars) } : {}),
+        ...(f.minForks ? { minForks: Number(f.minForks) } : {}),
+        ...(f.maxForks ? { maxForks: Number(f.maxForks) } : {}),
+        ...(f.search ? { search: f.search } : {}),
+      });
+      setAnalytics(result);
+      setAvailableLanguages(result.availableLanguages);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load analytics');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    api
-      .getAnalytics()
-      .then(setAnalytics)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
+    // Initial data fetch on mount
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchAnalytics(defaultFilters);
   }, []);
+
+  const updateFilters = (patch: Partial<AnalyticsFilters>) => {
+    const next = { ...filters, ...patch };
+    setFilters(next);
+    void fetchAnalytics(next);
+  };
 
   if (loading) {
     return (
@@ -111,6 +157,67 @@ export default function AnalyticsPage() {
       <PageTitle subtitle="Aggregated dataset statistics for empirical software engineering research.">
         Research Analytics
       </PageTitle>
+
+      <Card className="analytics-filter-bar">
+        <Caption>Filter which repositories are included in the analytics.</Caption>
+        <div className="analytics-filter-row">
+          <Input
+            search
+            placeholder="Search name or description"
+            value={filters.search}
+            onChange={(e) => updateFilters({ search: e.target.value })}
+          />
+          <Select
+            value={filters.language}
+            onChange={(e) => updateFilters({ language: e.target.value })}
+            placeholder="All languages"
+            options={availableLanguages.map((l) => ({ value: l, label: l }))}
+          />
+          <Input
+            label="Min stars"
+            type="number"
+            min={0}
+            placeholder="0"
+            value={filters.minStars}
+            onChange={(e) => updateFilters({ minStars: e.target.value })}
+          />
+          <Input
+            label="Max stars"
+            type="number"
+            min={0}
+            placeholder="Any"
+            value={filters.maxStars}
+            onChange={(e) => updateFilters({ maxStars: e.target.value })}
+          />
+          <Input
+            label="Min forks"
+            type="number"
+            min={0}
+            placeholder="0"
+            value={filters.minForks}
+            onChange={(e) => updateFilters({ minForks: e.target.value })}
+          />
+          <Input
+            label="Max forks"
+            type="number"
+            min={0}
+            placeholder="Any"
+            value={filters.maxForks}
+            onChange={(e) => updateFilters({ maxForks: e.target.value })}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setFilters(defaultFilters);
+              void fetchAnalytics(defaultFilters);
+            }}
+            disabled={JSON.stringify(filters) === JSON.stringify(defaultFilters)}
+          >
+            Clear
+          </Button>
+        </div>
+      </Card>
 
       {/* Repository Overview */}
       <section className="analytics-section">
