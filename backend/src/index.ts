@@ -1079,6 +1079,198 @@ app.get(`${API_PREFIX}/account/contributions`, async (request, reply) => {
   return jsonForResponse({ contributions });
 });
 
+/** Aggregate analytics across all repositories for MSR research. */
+app.get(`${API_PREFIX}/analytics`, async () => {
+  const repositories = await prisma.repository.findMany({
+    select: {
+      id: true,
+      language: true,
+      stars: true,
+      forks: true,
+      openIssues: true,
+      githubCreatedAt: true,
+      githubUpdatedAt: true,
+      createdAt: true,
+    },
+  });
+
+  const artifacts = await prisma.repositoryArtifact.findMany({
+    select: {
+      type: true,
+      state: true,
+      authorLogin: true,
+      repositoryId: true,
+      githubCreatedAt: true,
+    },
+  });
+
+  const snapshots = await prisma.entitySnapshot.findMany({
+    select: {
+      entityType: true,
+      source: true,
+      repositoryId: true,
+    },
+  });
+
+  // --- Repository overview ---
+  const repoCount = repositories.length;
+  const starsArr = repositories.map((r) => r.stars).sort((a, b) => a - b);
+  const forksArr = repositories.map((r) => r.forks).sort((a, b) => a - b);
+  const openIssuesArr = repositories.map((r) => r.openIssues).sort((a, b) => a - b);
+
+  const median = (arr: number[]) => {
+    if (arr.length === 0) return 0;
+    const mid = Math.floor(arr.length / 2);
+    return arr.length % 2 !== 0 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
+  };
+
+  const repoOverview = {
+    total: repoCount,
+    stars: {
+      min: starsArr[0] ?? 0,
+      max: starsArr[starsArr.length - 1] ?? 0,
+      median: median(starsArr),
+      average: repoCount > 0 ? Math.round(starsArr.reduce((a, b) => a + b, 0) / repoCount) : 0,
+    },
+    forks: {
+      min: forksArr[0] ?? 0,
+      max: forksArr[forksArr.length - 1] ?? 0,
+      median: median(forksArr),
+      average: repoCount > 0 ? Math.round(forksArr.reduce((a, b) => a + b, 0) / repoCount) : 0,
+    },
+    openIssues: {
+      min: openIssuesArr[0] ?? 0,
+      max: openIssuesArr[openIssuesArr.length - 1] ?? 0,
+      median: median(openIssuesArr),
+      average: repoCount > 0 ? Math.round(openIssuesArr.reduce((a, b) => a + b, 0) / repoCount) : 0,
+    },
+  };
+
+  // --- Language distribution ---
+  const languageMap = new Map<string, number>();
+  for (const repo of repositories) {
+    const lang = repo.language ?? 'Unknown';
+    languageMap.set(lang, (languageMap.get(lang) ?? 0) + 1);
+  }
+  const languageDistribution = [...languageMap.entries()]
+    .map(([language, count]) => ({ language, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // --- Artifact breakdown ---
+  const artifactTypeCounts = { REPOSITORY: 0, ISSUE: 0, PULL_REQUEST: 0, COMMIT: 0 };
+  const issueStates = { open: 0, closed: 0 };
+  const prStates = { open: 0, closed: 0, merged: 0 };
+
+  for (const artifact of artifacts) {
+    artifactTypeCounts[artifact.type] = (artifactTypeCounts[artifact.type] ?? 0) + 1;
+
+    if (artifact.type === 'ISSUE') {
+      if (artifact.state === 'open') issueStates.open++;
+      else issueStates.closed++;
+    } else if (artifact.type === 'PULL_REQUEST') {
+      if (artifact.state === 'merged') prStates.merged++;
+      else if (artifact.state === 'open') prStates.open++;
+      else prStates.closed++;
+    }
+  }
+
+  // --- Contributor metrics ---
+  const authorMap = new Map<string, { commits: number; issues: number; pulls: number; repos: Set<string> }>();
+  for (const artifact of artifacts) {
+    if (!artifact.authorLogin) continue;
+    let entry = authorMap.get(artifact.authorLogin);
+    if (!entry) {
+      entry = { commits: 0, issues: 0, pulls: 0, repos: new Set() };
+      authorMap.set(artifact.authorLogin, entry);
+    }
+    entry.repos.add(artifact.repositoryId);
+    if (artifact.type === 'COMMIT') entry.commits++;
+    else if (artifact.type === 'ISSUE') entry.issues++;
+    else if (artifact.type === 'PULL_REQUEST') entry.pulls++;
+  }
+
+  const uniqueAuthors = authorMap.size;
+  const topContributors = [...authorMap.entries()]
+    .map(([login, data]) => ({
+      login,
+      commits: data.commits,
+      issues: data.issues,
+      pulls: data.pulls,
+      total: data.commits + data.issues + data.pulls,
+      repositories: data.repos.size,
+    }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 20);
+
+  // --- Collection source comparison ---
+  const sourceMap = new Map<string, number>();
+  for (const snapshot of snapshots) {
+    sourceMap.set(snapshot.source, (sourceMap.get(snapshot.source) ?? 0) + 1);
+  }
+  const collectionSources = [...sourceMap.entries()]
+    .map(([source, count]) => ({ source, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const entityTypeSourceBreakdown = snapshots.reduce(
+    (acc, s) => {
+      const key = `${s.entityType}:${s.source}`;
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
+
+  // --- Temporal stats (per year) ---
+  const repoCreationByYear = new Map<string, number>();
+  const issueCreationByYear = new Map<string, number>();
+  const prCreationByYear = new Map<string, number>();
+  const commitByYear = new Map<string, number>();
+
+  for (const repo of repositories) {
+    if (repo.githubCreatedAt) {
+      const year = repo.githubCreatedAt.getFullYear().toString();
+      repoCreationByYear.set(year, (repoCreationByYear.get(year) ?? 0) + 1);
+    }
+  }
+
+  for (const artifact of artifacts) {
+    if (!artifact.githubCreatedAt) continue;
+    const year = artifact.githubCreatedAt.getFullYear().toString();
+    if (artifact.type === 'ISSUE') issueCreationByYear.set(year, (issueCreationByYear.get(year) ?? 0) + 1);
+    else if (artifact.type === 'PULL_REQUEST') prCreationByYear.set(year, (prCreationByYear.get(year) ?? 0) + 1);
+    else if (artifact.type === 'COMMIT') commitByYear.set(year, (commitByYear.get(year) ?? 0) + 1);
+  }
+
+  const toYearlyArray = (map: Map<string, number>) =>
+    [...map.entries()]
+      .map(([year, count]) => ({ year, count }))
+      .sort((a, b) => a.year.localeCompare(b.year));
+
+  return jsonForResponse({
+    repositoryOverview: repoOverview,
+    languageDistribution,
+    artifactBreakdown: {
+      byType: artifactTypeCounts,
+      issues: issueStates,
+      pullRequests: prStates,
+      totalArtifacts: artifacts.length,
+      totalSnapshots: snapshots.length,
+    },
+    contributorMetrics: {
+      uniqueAuthors,
+      topContributors,
+    },
+    collectionSources,
+    entityTypeSourceBreakdown,
+    temporal: {
+      repositoriesByYear: toYearlyArray(repoCreationByYear),
+      issuesByYear: toYearlyArray(issueCreationByYear),
+      pullRequestsByYear: toYearlyArray(prCreationByYear),
+      commitsByYear: toYearlyArray(commitByYear),
+    },
+  });
+});
+
 /** Receive a snapshot from the browser extension and persist it. */
 app.post<{ Body: ExtensionSnapshotPayload }>(`${API_PREFIX}/extension/snapshots`, async (request, reply) => {
   const { repositoryFullName, entityType, payload } = request.body;

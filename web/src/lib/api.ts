@@ -303,4 +303,50 @@ export const api = {
   async listContributions() {
     return request<{ contributions: Contribution[] }>('/account/contributions');
   },
+
+  /** Fetch aggregated analytics across all repositories for MSR research. */
+  async getAnalytics() {
+    return request<Analytics>('/analytics');
+  },
+};
+
+/**
+ * Aggregated analytics data for mining software repositories research.
+ */
+export type AnalyticsStat = { min: number; max: number; median: number; average: number };
+
+export type Analytics = {
+  repositoryOverview: {
+    total: number;
+    stars: AnalyticsStat;
+    forks: AnalyticsStat;
+    openIssues: AnalyticsStat;
+  };
+  languageDistribution: { language: string; count: number }[];
+  artifactBreakdown: {
+    byType: { REPOSITORY: number; ISSUE: number; PULL_REQUEST: number; COMMIT: number };
+    issues: { open: number; closed: number };
+    pullRequests: { open: number; closed: number; merged: number };
+    totalArtifacts: number;
+    totalSnapshots: number;
+  };
+  contributorMetrics: {
+    uniqueAuthors: number;
+    topContributors: {
+      login: string;
+      commits: number;
+      issues: number;
+      pulls: number;
+      total: number;
+      repositories: number;
+    }[];
+  };
+  collectionSources: { source: string; count: number }[];
+  entityTypeSourceBreakdown: Record<string, number>;
+  temporal: {
+    repositoriesByYear: { year: string; count: number }[];
+    issuesByYear: { year: string; count: number }[];
+    pullRequestsByYear: { year: string; count: number }[];
+    commitsByYear: { year: string; count: number }[];
+  };
 };
