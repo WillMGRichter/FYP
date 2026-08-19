@@ -13,6 +13,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import SettingsPage from './pages/SettingsPage';
 import Layout from './pages/Layout';
 import RepositoryDetailPage from './pages/RepositoryDetailPage.tsx';
+import AnalyticsPage from './pages/AnalyticsPage.tsx';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -20,6 +21,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<App />} />
+          <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/components" element={<ComponentShowcase />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/repositories/:id" element={<RepositoryDetailPage />} />

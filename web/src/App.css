@@ -140,10 +140,67 @@
   gap: var(--space-3);
 }
 
+.export-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.export-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.export-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+}
+
+.export-option-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.export-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.export-actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
 .repository-section {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+.filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.filter-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: flex-end;
+}
+
+.filter-bar-row > * {
+  flex: 1 1 160px;
+  min-width: 140px;
+}
+
+.filter-bar-row > .filter-bar-row > * {
+  flex: 1 1 120px;
 }
 
 .repository-grid {

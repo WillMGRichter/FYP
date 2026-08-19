@@ -226,8 +226,27 @@ export const api = {
   },
 
   /** List all repositories in the snapshot store. */
-  async listRepositories() {
-    return request<{ repositories: Repository[] }>('/repositories');
+  async listRepositories(filters?: {
+    language?: string;
+    minStars?: number;
+    maxStars?: number;
+    minForks?: number;
+    maxForks?: number;
+    search?: string;
+    sort?: string;
+    order?: 'asc' | 'desc';
+  }) {
+    const params = new URLSearchParams();
+    if (filters?.language) params.set('language', filters.language);
+    if (filters?.minStars != null) params.set('minStars', String(filters.minStars));
+    if (filters?.maxStars != null) params.set('maxStars', String(filters.maxStars));
+    if (filters?.minForks != null) params.set('minForks', String(filters.minForks));
+    if (filters?.maxForks != null) params.set('maxForks', String(filters.maxForks));
+    if (filters?.search) params.set('search', filters.search);
+    if (filters?.sort) params.set('sort', filters.sort);
+    if (filters?.order) params.set('order', filters.order);
+    const qs = params.toString();
+    return request<{ repositories: Repository[]; availableLanguages: string[] }>(`/repositories${qs ? `?${qs}` : ''}`);
   },
 
   /**
@@ -303,4 +322,105 @@ export const api = {
   async listContributions() {
     return request<{ contributions: Contribution[] }>('/account/contributions');
   },
+
+  /** Fetch aggregated analytics across repositories for MSR research. */
+  async getAnalytics(filters?: {
+    language?: string;
+    minStars?: number;
+    maxStars?: number;
+    minForks?: number;
+    maxForks?: number;
+    search?: string;
+  }) {
+    const params = new URLSearchParams();
+    if (filters?.language) params.set('language', filters.language);
+    if (filters?.minStars != null) params.set('minStars', String(filters.minStars));
+    if (filters?.maxStars != null) params.set('maxStars', String(filters.maxStars));
+    if (filters?.minForks != null) params.set('minForks', String(filters.minForks));
+    if (filters?.maxForks != null) params.set('maxForks', String(filters.maxForks));
+    if (filters?.search) params.set('search', filters.search);
+    const qs = params.toString();
+    return request<Analytics>(`/analytics${qs ? `?${qs}` : ''}`);
+  },
+
+  /**
+   * Export filtered data across multiple repositories as a JSON or CSV file.
+   * @param filters - Repository and entity filters
+   * @param format - Export format (json or csv)
+   */
+  async filteredExport(
+    filters: {
+      language?: string;
+      minStars?: number;
+      maxStars?: number;
+      minForks?: number;
+      maxForks?: number;
+      search?: string;
+      entityTypes?: ('REPOSITORY' | 'ISSUE' | 'PULL_REQUEST' | 'COMMIT')[];
+      sources?: string[];
+    },
+    format: 'json' | 'csv',
+  ) {
+    const sessionToken = sessionStore.get();
+    const response = await fetch(
+      `${API_BASE_URL}/export?format=${format}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+        },
+        body: JSON.stringify({ ...filters, format }),
+      },
+    );
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error ?? `Export failed with status ${response.status}`);
+    }
+
+    return response.blob();
+  },
+};
+
+/**
+ * Aggregated analytics data for mining software repositories research.
+ */
+export type AnalyticsStat = { min: number; max: number; median: number; average: number };
+
+export type Analytics = {
+  repositoryOverview: {
+    total: number;
+    stars: AnalyticsStat;
+    forks: AnalyticsStat;
+    openIssues: AnalyticsStat;
+  };
+  languageDistribution: { language: string; count: number }[];
+  availableLanguages: string[];
+  artifactBreakdown: {
+    byType: { REPOSITORY: number; ISSUE: number; PULL_REQUEST: number; COMMIT: number };
+    issues: { open: number; closed: number };
+    pullRequests: { open: number; closed: number; merged: number };
+    totalArtifacts: number;
+    totalSnapshots: number;
+  };
+  contributorMetrics: {
+    uniqueAuthors: number;
+    topContributors: {
+      login: string;
+      commits: number;
+      issues: number;
+      pulls: number;
+      total: number;
+      repositories: number;
+    }[];
+  };
+  collectionSources: { source: string; count: number }[];
+  entityTypeSourceBreakdown: Record<string, number>;
+  temporal: {
+    repositoriesByYear: { year: string; count: number }[];
+    issuesByYear: { year: string; count: number }[];
+    pullRequestsByYear: { year: string; count: number }[];
+    commitsByYear: { year: string; count: number }[];
+  };
 };
