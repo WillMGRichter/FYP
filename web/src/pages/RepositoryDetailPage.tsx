@@ -7,7 +7,14 @@ import { Badge } from '../components/ui/Badge';
 import type { StatusVariant } from '../components/ui/Badge';
 import { Alert, EmptyState, Spinner, ToastContainer, useToast } from '../components/ui/Feedback';
 import { api } from '../lib/api';
-import type { ArtifactDetail, RepositoryDetail, SnapshotDetail } from '../lib/api';
+import type {
+  ArtifactDetail,
+  ChangeHistory,
+  EntityChangeEvent,
+  EntityChangeHistory,
+  RepositoryDetail,
+  SnapshotDetail,
+} from '../lib/api';
 import './RepositoryDetailPage.css';
 
 /**
@@ -106,6 +113,122 @@ function RepositorySnapshots({ snapshots }: { snapshots: SnapshotDetail[] }) {
 }
 
 /**
+ * Format an arbitrary diff value for display, truncating long payloads.
+ * @param value - Raw decoded JSON value
+ * @returns Compact string representation
+ */
+const formatDiffValue = (value: unknown): string => {
+  if (value === undefined) return '—';
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  if (text == null) return 'null';
+  return text.length > 120 ? `${text.slice(0, 120)}…` : text;
+};
+
+/**
+ * Render one detected change event: when it happened and which fields moved.
+ */
+function ChangeEventItem({ event }: { event: EntityChangeEvent }) {
+  const [expanded, setExpanded] = useState(false);
+  const visibleFields = expanded ? event.fields : event.fields.slice(0, 6);
+
+  return (
+    <div className="change-event">
+      <div className="change-event-header">
+        <Caption>{new Date(event.toCapturedAt).toLocaleString()}</Caption>
+        <Caption>
+          {event.fromSource} → {event.toSource}
+        </Caption>
+        <Badge status="progress" label={`${event.changedFieldCount} field${event.changedFieldCount === 1 ? '' : 's'}`} />
+      </div>
+      <div className="change-event-fields">
+        {visibleFields.map((field) => (
+          <div className={`field-diff field-diff-${field.status}`} key={field.path}>
+            <code className="field-diff-path">{field.path}</code>
+            <span className="field-diff-values">
+              <span className="field-diff-before">{formatDiffValue(field.before)}</span>
+              <span className="field-diff-arrow">→</span>
+              <span className="field-diff-after">{formatDiffValue(field.after)}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+      {event.fields.length > 6 && (
+        <Button variant="ghost" size="sm" onClick={() => setExpanded((open) => !open)}>
+          {expanded ? 'Show fewer fields' : `Show all ${event.fields.length} changed fields`}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Render the per-entity change history computed from consecutive snapshots.
+ */
+function ChangeHistoryPanel({
+  entities,
+  totalChangeEvents,
+}: {
+  entities: EntityChangeHistory[];
+  totalChangeEvents: number;
+}) {
+  const changedEntities = entities
+    .filter((entity) => entity.changeEvents.length > 0)
+    .sort(
+      (a, b) =>
+        new Date(b.changeEvents.at(-1)?.toCapturedAt ?? 0).getTime() -
+        new Date(a.changeEvents.at(-1)?.toCapturedAt ?? 0).getTime(),
+    );
+
+  if (changedEntities.length === 0) {
+    return (
+      <EmptyState
+        title="No changes detected yet"
+        body={
+          totalChangeEvents === 0
+            ? 'Change history appears once an entity has been captured two or more times with differing data. Re-run a collection or capture extension snapshots over time.'
+            : 'No entity has changed between captures yet.'
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="artifact-list">
+      {changedEntities.map((entity) => (
+        <details className="artifact-item" key={entity.key}>
+          <summary className="artifact-summary">
+            <div className="artifact-title-block">
+              <span className={`artifact-number artifact-number-${entity.entityType === 'ISSUE' ? 'issue' : entity.entityType === 'PULL_REQUEST' ? 'pr' : entity.entityType === 'COMMIT' ? 'commit' : 'issue'}`}>
+                {entity.label ?? entity.key}
+              </span>
+              <span className="artifact-title">{entity.title ?? 'Untitled entity'}</span>
+            </div>
+            <div className="artifact-meta">
+              {entity.state && <Badge status={stateVariant(entity.state)} label={entity.state} />}
+              <Badge status="draft" label={`${entity.changeEvents.length} change${entity.changeEvents.length === 1 ? '' : 's'}`} />
+              <Caption>
+                {entity.snapshotCount} snapshot{entity.snapshotCount === 1 ? '' : 's'}
+              </Caption>
+              {entity.htmlUrl && (
+                <Link href={entity.htmlUrl} external>
+                  GitHub
+                </Link>
+              )}
+            </div>
+          </summary>
+
+          <div className="snapshot-list">
+            {[...entity.changeEvents].reverse().map((event) => (
+              <ChangeEventItem event={event} key={`${event.fromSnapshotId}-${event.toSnapshotId}`} />
+            ))}
+          </div>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+/**
  * Repository detail page: browse collected artifacts and snapshots,
  * and export the full dataset as JSON or CSV.
  */
@@ -127,6 +250,9 @@ function RepositoryDetailBody({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState<'json' | 'csv' | null>(null);
   const tabs = useTabs('issues');
+  const [history, setHistory] = useState<ChangeHistory | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   useEffect(() => {
     api
@@ -135,6 +261,28 @@ function RepositoryDetailBody({ id }: { id: string }) {
       .catch((loadError: Error) => setError(loadError.message))
       .finally(() => setLoading(false));
   }, [id]);
+
+  /**
+   * Load the change history the first time the Change History tab is opened.
+   * Triggered from the tab-change handler so no data loads until requested.
+   */
+  const loadChangeHistory = async () => {
+    if (history || historyLoading) return;
+    setHistoryLoading(true);
+    try {
+      const detail = await api.getChangeHistory(id);
+      setHistory(detail);
+    } catch (historyLoadError) {
+      setHistoryError(historyLoadError instanceof Error ? historyLoadError.message : 'Failed to load history');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const handleTabChange = (key: string) => {
+    tabs.onChange(key);
+    if (key === 'history') void loadChangeHistory();
+  };
 
   const issues = repository?.artifacts.filter((artifact) => artifact.type === 'ISSUE') ?? [];
   const pulls = repository?.artifacts.filter((artifact) => artifact.type === 'PULL_REQUEST') ?? [];
@@ -235,9 +383,10 @@ function RepositoryDetailBody({ id }: { id: string }) {
               { key: 'pulls', label: 'Pull Requests', count: pulls.length },
               { key: 'commits', label: 'Commits', count: commits.length },
               { key: 'repository', label: 'Repository', count: repositorySnapshots.length },
+              { key: 'history', label: 'Change History', count: history?.totalChangeEvents },
             ]}
             activeKey={tabs.activeKey}
-            onChange={tabs.onChange}
+            onChange={handleTabChange}
           />
 
           <TabPanel id="issues" activeKey={tabs.activeKey}>
@@ -269,6 +418,41 @@ function RepositoryDetailBody({ id }: { id: string }) {
                 Repository Data
               </SectionHeading>
               <RepositorySnapshots snapshots={repositorySnapshots} />
+            </Card>
+          </TabPanel>
+
+          <TabPanel id="history" activeKey={tabs.activeKey}>
+            <Card>
+              <SectionHeading subtitle="Field-level changes detected between consecutive snapshots of each entity.">
+                Change History
+              </SectionHeading>
+              {historyLoading && (
+                <div className="repo-detail-loading">
+                  <Spinner />
+                  <Text secondary>Computing change history</Text>
+                </div>
+              )}
+              {!historyLoading && historyError && (
+                <Alert variant="error" title="Could not load change history">
+                  {historyError}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setHistoryError(null);
+                      void loadChangeHistory();
+                    }}
+                  >
+                    Retry
+                  </Button>
+                </Alert>
+              )}
+              {!historyLoading && !historyError && history && (
+                <ChangeHistoryPanel
+                  entities={history.entities}
+                  totalChangeEvents={history.totalChangeEvents}
+                />
+              )}
             </Card>
           </TabPanel>
         </>

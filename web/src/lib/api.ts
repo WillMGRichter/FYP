@@ -132,6 +132,59 @@ export type RepositoryDetail = Repository & {
 };
 
 /**
+ * A single field-level difference between two consecutive snapshots.
+ */
+export type SnapshotFieldChange = {
+  path: string;
+  before: unknown;
+  after: unknown;
+  status: 'added' | 'removed' | 'changed';
+};
+
+/**
+ * A detected change event between two consecutive captures of one entity.
+ */
+export type EntityChangeEvent = {
+  fromSnapshotId: string;
+  toSnapshotId: string;
+  fromSource: string;
+  toSource: string;
+  fromCapturedAt: string;
+  toCapturedAt: string;
+  changedFieldCount: number;
+  fields: SnapshotFieldChange[];
+};
+
+/**
+ * The full change history for one tracked entity
+ * (the repository itself or an issue / pull request / commit).
+ */
+export type EntityChangeHistory = {
+  key: string;
+  entityType: 'REPOSITORY' | 'ISSUE' | 'PULL_REQUEST' | 'COMMIT';
+  label: string | null;
+  githubNumber: number | null;
+  githubSha: string | null;
+  title: string | null;
+  state: string | null;
+  htmlUrl: string | null;
+  snapshotCount: number;
+  firstCapturedAt: string | null;
+  lastCapturedAt: string | null;
+  changeEvents: EntityChangeEvent[];
+};
+
+/**
+ * Change-history payload for a repository's collected dataset.
+ */
+export type ChangeHistory = {
+  repository: { id: string; fullName: string };
+  totalEntitiesTracked: number;
+  totalChangeEvents: number;
+  entities: EntityChangeHistory[];
+};
+
+/**
  * Session token persistence layer using localStorage.
  */
 export const sessionStore = {
@@ -255,6 +308,15 @@ export const api = {
    */
   async getRepository(id: string) {
     return request<{ repository: RepositoryDetail }>(`/repositories/${encodeURIComponent(id)}`);
+  },
+
+  /**
+   * Fetch the change history for a repository: field-level diffs between
+   * consecutive snapshots for every tracked entity.
+   * @param id - Repository record ID
+   */
+  async getChangeHistory(id: string) {
+    return request<ChangeHistory>(`/repositories/${encodeURIComponent(id)}/changes`);
   },
 
   /**

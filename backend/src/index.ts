@@ -590,6 +590,87 @@ async function loadRepositoryWithSnapshots(id: string) {
 }
 
 /**
+ * A single field-level difference between two consecutive snapshots.
+ */
+type SnapshotFieldChange = {
+  path: string;
+  before: unknown;
+  after: unknown;
+  status: 'added' | 'removed' | 'changed';
+};
+
+/**
+ * Flatten a JSON payload into stable path keys with primitive leaf values.
+ * Nested objects use dot notation and arrays use index brackets
+ * (e.g. "user.login" or "labels[0].name") so payloads can be compared key-by-key.
+ * @param value - Arbitrary decoded JSON value
+ * @param prefix - Path prefix accumulated during recursion
+ * @param out - Accumulator map of path to leaf value
+ * @returns Map of flattened paths to primitive leaves (or empty containers)
+ */
+function flattenPayload(value: unknown, prefix = '', out = new Map<string, unknown>()) {
+  if (value === null || typeof value !== 'object') {
+    out.set(prefix || '$', value);
+    return out;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      out.set(prefix || '$', []);
+    } else {
+      value.forEach((item, index) => flattenPayload(item, `${prefix}[${index}]`, out));
+    }
+    return out;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) {
+    out.set(prefix || '$', {});
+    return out;
+  }
+
+  for (const [key, item] of entries) {
+    flattenPayload(item, prefix ? `${prefix}.${key}` : key, out);
+  }
+  return out;
+}
+
+/**
+ * Structural equality for decoded JSON values.
+ */
+const jsonEquals = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Compute field-level differences between two snapshot payloads.
+ * Paths present only before are "removed", only after are "added",
+ * and present in both with different values are "changed".
+ * @param before - Older snapshot payload
+ * @param after - Newer snapshot payload
+ * @returns Sorted list of field-level changes (empty when payloads match)
+ */
+function diffSnapshotPayloads(before: unknown, after: unknown): SnapshotFieldChange[] {
+  const previous = flattenPayload(before);
+  const current = flattenPayload(after);
+  const changes: SnapshotFieldChange[] = [];
+
+  for (const [path, value] of previous) {
+    if (!current.has(path)) {
+      changes.push({ path, before: value, after: null, status: 'removed' });
+    } else if (!jsonEquals(current.get(path), value)) {
+      changes.push({ path, before: value, after: current.get(path), status: 'changed' });
+    }
+  }
+
+  for (const [path, value] of current) {
+    if (!previous.has(path)) {
+      changes.push({ path, before: null, after: value, status: 'added' });
+    }
+  }
+
+  return changes.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
  * Escape a value for CSV output, quoting and doubling embedded quotes.
  * @param value - Raw cell value
  * @returns CSV-safe quoted cell
@@ -607,6 +688,143 @@ app.get<{ Params: { id: string } }>(`${API_PREFIX}/repositories/:id`, async (req
   }
 
   return jsonForResponse({ repository });
+});
+
+/**
+ * A detected change event between two consecutive snapshots of one entity.
+ */
+type EntityChangeEvent = {
+  fromSnapshotId: string;
+  toSnapshotId: string;
+  fromSource: string;
+  toSource: string;
+  fromCapturedAt: Date;
+  toCapturedAt: Date;
+  changedFieldCount: number;
+  fields: SnapshotFieldChange[];
+};
+
+/**
+ * The complete change history for a single tracked entity
+ * (the repository itself or one artifact).
+ */
+type EntityChangeHistory = {
+  key: string;
+  entityType: 'REPOSITORY' | 'ISSUE' | 'PULL_REQUEST' | 'COMMIT';
+  label: string | null;
+  githubNumber: number | null;
+  githubSha: string | null;
+  title: string | null;
+  state: string | null;
+  htmlUrl: string | null;
+  snapshotCount: number;
+  firstCapturedAt: Date | null;
+  lastCapturedAt: Date | null;
+  changeEvents: EntityChangeEvent[];
+};
+
+/** Change-history endpoint: field-level diffs between consecutive snapshots per entity. */
+app.get<{ Params: { id: string } }>(`${API_PREFIX}/repositories/:id/changes`, async (request, reply) => {
+  const repository = await prisma.repository.findUnique({
+    where: { id: request.params.id },
+    include: {
+      artifacts: {
+        orderBy: [{ type: 'asc' }, { githubNumber: 'asc' }],
+        include: {
+          snapshots: {
+            orderBy: { capturedAt: 'asc' },
+            select: { id: true, source: true, capturedAt: true, payload: true },
+          },
+        },
+      },
+      snapshots: {
+        where: { artifactId: null },
+        orderBy: { capturedAt: 'asc' },
+        select: { id: true, source: true, capturedAt: true, payload: true },
+      },
+    },
+  });
+
+  if (!repository) {
+    return reply.code(404).send({ error: 'Repository was not found.' });
+  }
+
+  /**
+   * Pair consecutive snapshots (oldest to newest) and record every
+   * non-empty field-level diff as a change event.
+   */
+  const buildChangeEvents = (
+    snapshots: { id: string; source: string; capturedAt: Date; payload: unknown }[],
+  ): EntityChangeEvent[] => {
+    const events: EntityChangeEvent[] = [];
+    for (let index = 1; index < snapshots.length; index++) {
+      const previous = snapshots[index - 1];
+      const current = snapshots[index];
+      const fields = diffSnapshotPayloads(previous.payload, current.payload);
+      if (fields.length === 0) continue;
+
+      events.push({
+        fromSnapshotId: previous.id,
+        toSnapshotId: current.id,
+        fromSource: previous.source,
+        toSource: current.source,
+        fromCapturedAt: previous.capturedAt,
+        toCapturedAt: current.capturedAt,
+        changedFieldCount: fields.length,
+        fields,
+      });
+    }
+    return events;
+  };
+
+  const entities: EntityChangeHistory[] = [
+    {
+      key: 'repository',
+      entityType: 'REPOSITORY',
+      label: repository.fullName,
+      githubNumber: null,
+      githubSha: null,
+      title: repository.fullName,
+      state: null,
+      htmlUrl: repository.htmlUrl,
+      snapshotCount: repository.snapshots.length,
+      firstCapturedAt: repository.snapshots[0]?.capturedAt ?? null,
+      lastCapturedAt:
+        repository.snapshots.length > 0
+          ? repository.snapshots[repository.snapshots.length - 1].capturedAt
+          : null,
+      changeEvents: buildChangeEvents(repository.snapshots),
+    },
+    ...repository.artifacts.map((artifact) => ({
+      key: artifact.id,
+      entityType: artifact.type,
+      label:
+        artifact.githubNumber != null
+          ? `#${artifact.githubNumber}`
+          : artifact.githubSha?.slice(0, 7) ?? artifact.title ?? artifact.id,
+      githubNumber: artifact.githubNumber,
+      githubSha: artifact.githubSha,
+      title: artifact.title,
+      state: artifact.state,
+      htmlUrl: artifact.htmlUrl,
+      snapshotCount: artifact.snapshots.length,
+      firstCapturedAt: artifact.snapshots[0]?.capturedAt ?? null,
+      lastCapturedAt:
+        artifact.snapshots.length > 0
+          ? artifact.snapshots[artifact.snapshots.length - 1].capturedAt
+          : null,
+      changeEvents: buildChangeEvents(artifact.snapshots),
+    })),
+  ];
+
+  const totalChangeEvents = entities.reduce((sum, entity) => sum + entity.changeEvents.length, 0);
+
+  return jsonForResponse({
+    repository: { id: repository.id, fullName: repository.fullName },
+    totalEntitiesTracked: entities.length,
+    totalChangeEvents,
+    entities,
+  });
 });
 
 /** Export endpoint: download all collected data for a repository as JSON or CSV. */
