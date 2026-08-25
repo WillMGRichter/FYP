@@ -120,6 +120,8 @@ export type ArtifactDetail = {
   githubCreatedAt: string | null;
   githubUpdatedAt: string | null;
   collectedAt: string;
+  aiSummary: string | null;
+  aiSummaryGeneratedAt: string | null;
   snapshots: SnapshotDetail[];
 };
 
@@ -278,6 +280,17 @@ export const api = {
     }
 
     return response.blob();
+  },
+
+  /**
+   * Generate (or regenerate) an AI summary for a collected artifact.
+   * @param id - Artifact ID
+   */
+  async summariseArtifact(id: string) {
+    return request<{ artifact: { id: string; aiSummary: string | null; aiSummaryGeneratedAt: string | null } }>(
+      `/artifacts/${encodeURIComponent(id)}/summarise`,
+      { method: 'POST', body: JSON.stringify({}) },
+    );
   },
 
   /** List collection runs. */

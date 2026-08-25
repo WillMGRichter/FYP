@@ -334,6 +334,73 @@ async function githubFetch<T>(path: string, token?: string): Promise<{ data: T; 
   return { data, response };
 }
 
+const GEMINI_API = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent';
+
+/**
+ * Summarise a prompt using the Gemini free-tier API.
+ * @param prompt - Text prompt to send
+ * @returns The generated summary text
+ */
+async function summariseWithGemini(prompt: string): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not configured on the server.');
+  }
+
+  const response = await fetch(`${GEMINI_API}?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+    }),
+  });
+
+  const data = (await response.json()) as {
+    candidates?: { content?: { parts?: { text?: string }[] } }[];
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    throw new Error(data.error?.message ?? `Gemini request failed with status ${response.status}`);
+  }
+
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) {
+    throw new Error('Gemini returned no summary text.');
+  }
+
+  return text.trim();
+}
+
+/**
+ * Build a short summarisation prompt for an artifact from its type, title, state,
+ * and the relevant free-text field of its latest snapshot payload.
+ * @param artifact - The artifact being summarised
+ * @param payload - The latest snapshot payload for the artifact
+ */
+function buildArtifactPrompt(
+  artifact: { type: string; title: string | null; state: string | null },
+  payload: unknown,
+): string {
+  const record = payload as Record<string, unknown>;
+  const body =
+    artifact.type === 'COMMIT'
+      ? ((record.commit as Record<string, unknown> | undefined)?.message as string | undefined)
+      : (record.body as string | undefined);
+
+  const truncatedBody = (body ?? '').slice(0, 4000);
+  const kind = artifact.type === 'PULL_REQUEST' ? 'pull request' : artifact.type.toLowerCase();
+
+  return [
+    `Summarise the following GitHub ${kind} in 2-3 concise sentences for a software engineering researcher.`,
+    `Title: ${artifact.title ?? '(untitled)'}`,
+    artifact.state ? `State: ${artifact.state}` : null,
+    truncatedBody ? `Description:\n${truncatedBody}` : '(no description provided)',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 /**
  * Retrieve and decrypt a GitHub token by ID, optionally scoped to an account.
  * @param tokenId - ID of the token record
@@ -607,6 +674,48 @@ app.get<{ Params: { id: string } }>(`${API_PREFIX}/repositories/:id`, async (req
   }
 
   return jsonForResponse({ repository });
+});
+
+/** Summarise an artifact's collected content (title/body or commit message) using Gemini. */
+app.post<{ Params: { id: string } }>(`${API_PREFIX}/artifacts/:id/summarise`, async (request, reply) => {
+  const artifact = await prisma.repositoryArtifact.findUnique({
+    where: { id: request.params.id },
+    include: {
+      snapshots: {
+        orderBy: { capturedAt: 'desc' },
+        take: 1,
+        select: { payload: true },
+      },
+    },
+  });
+
+  if (!artifact) {
+    return reply.code(404).send({ error: 'Artifact was not found.' });
+  }
+
+  const latestSnapshot = artifact.snapshots[0];
+  if (!latestSnapshot) {
+    return reply.code(400).send({ error: 'This artifact has no collected snapshot to summarise.' });
+  }
+
+  try {
+    const prompt = buildArtifactPrompt(artifact, latestSnapshot.payload);
+    const summary = await summariseWithGemini(prompt);
+
+    const updated = await prisma.repositoryArtifact.update({
+      where: { id: artifact.id },
+      data: {
+        aiSummary: summary,
+        aiSummaryGeneratedAt: new Date(),
+      },
+      select: { id: true, aiSummary: true, aiSummaryGeneratedAt: true },
+    });
+
+    return jsonForResponse({ artifact: updated });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown summarisation failure';
+    return reply.code(502).send({ error: message });
+  }
 });
 
 /** Export endpoint: download all collected data for a repository as JSON or CSV. */

@@ -23,59 +23,116 @@ const stateVariant = (state: string): StatusVariant => {
 };
 
 /**
- * Render a collection of artifact rows with expandable snapshots.
+ * Render a collection of artifact rows with expandable snapshots and AI summaries.
  */
-function ArtifactList({ artifacts, accent }: { artifacts: ArtifactDetail[]; accent: 'issue' | 'pr' | 'commit' }) {
+function ArtifactList({
+  artifacts,
+  accent,
+  toast,
+}: {
+  artifacts: ArtifactDetail[];
+  accent: 'issue' | 'pr' | 'commit';
+  toast: ReturnType<typeof useToast>['toast'];
+}) {
+  const [summaries, setSummaries] = useState<
+    Record<string, { aiSummary: string | null; aiSummaryGeneratedAt: string | null }>
+  >({});
+  const [summarisingId, setSummarisingId] = useState<string | null>(null);
+
   if (artifacts.length === 0) {
     return (
       <EmptyState title="Nothing collected here yet" body="Run a collection or use the browser extension to capture data for this repository." />
     );
   }
 
+  const handleSummarise = async (artifactId: string) => {
+    setSummarisingId(artifactId);
+    try {
+      const { artifact } = await api.summariseArtifact(artifactId);
+      setSummaries((prev) => ({ ...prev, [artifactId]: artifact }));
+    } catch (summariseError) {
+      toast.error(
+        summariseError instanceof Error ? summariseError.message : 'Summarisation failed',
+        'AI Summary',
+      );
+    } finally {
+      setSummarisingId(null);
+    }
+  };
+
   return (
     <div className="artifact-list">
-      {artifacts.map((artifact) => (
-        <details className="artifact-item" key={artifact.id}>
-          <summary className="artifact-summary">
-            <div className="artifact-title-block">
-              <span className={`artifact-number artifact-number-${accent}`}>
-                {artifact.githubNumber
-                  ? `#${artifact.githubNumber}`
-                  : artifact.githubSha?.slice(0, 7) ?? '—'}
-              </span>
-              <span className="artifact-title">{artifact.title ?? 'Untitled artifact'}</span>
-            </div>
-            <div className="artifact-meta">
-              {artifact.state && <Badge status={stateVariant(artifact.state)} label={artifact.state} />}
-              {artifact.authorLogin && <Caption>{artifact.authorLogin}</Caption>}
-              <Caption>
-                {artifact.snapshots.length} snapshot{artifact.snapshots.length === 1 ? '' : 's'}
-              </Caption>
-              {artifact.htmlUrl && (
-                <Link href={artifact.htmlUrl} external>
-                  GitHub
-                </Link>
+      {artifacts.map((artifact) => {
+        const summary = summaries[artifact.id] ?? artifact;
+
+        return (
+          <details className="artifact-item" key={artifact.id}>
+            <summary className="artifact-summary">
+              <div className="artifact-title-block">
+                <span className={`artifact-number artifact-number-${accent}`}>
+                  {artifact.githubNumber
+                    ? `#${artifact.githubNumber}`
+                    : artifact.githubSha?.slice(0, 7) ?? '—'}
+                </span>
+                <span className="artifact-title">{artifact.title ?? 'Untitled artifact'}</span>
+              </div>
+              <div className="artifact-meta">
+                {artifact.state && <Badge status={stateVariant(artifact.state)} label={artifact.state} />}
+                {artifact.authorLogin && <Caption>{artifact.authorLogin}</Caption>}
+                <Caption>
+                  {artifact.snapshots.length} snapshot{artifact.snapshots.length === 1 ? '' : 's'}
+                </Caption>
+                {artifact.htmlUrl && (
+                  <Link href={artifact.htmlUrl} external>
+                    GitHub
+                  </Link>
+                )}
+              </div>
+            </summary>
+
+            <div className="artifact-ai-summary">
+              <Button
+                variant="ghost"
+                size="sm"
+                loading={summarisingId === artifact.id}
+                disabled={summarisingId !== null}
+                onClick={(event) => {
+                  event.preventDefault();
+                  handleSummarise(artifact.id);
+                }}
+              >
+                {summary.aiSummary ? 'Re-summarise' : 'Summarise'}
+              </Button>
+              {summary.aiSummary && (
+                <>
+                  <Text>{summary.aiSummary}</Text>
+                  {summary.aiSummaryGeneratedAt && (
+                    <Caption>
+                      Generated {new Date(summary.aiSummaryGeneratedAt).toLocaleString()}
+                    </Caption>
+                  )}
+                </>
               )}
             </div>
-          </summary>
 
-          <div className="snapshot-list">
-            {artifact.snapshots.length === 0 ? (
-              <Caption>No snapshots captured for this artifact.</Caption>
-            ) : (
-              artifact.snapshots.map((snapshot) => (
-                <div className="snapshot-item" key={snapshot.id}>
-                  <div className="snapshot-header">
-                    <Caption>Source: {snapshot.source}</Caption>
-                    <Caption>Captured: {new Date(snapshot.capturedAt).toLocaleString()}</Caption>
+            <div className="snapshot-list">
+              {artifact.snapshots.length === 0 ? (
+                <Caption>No snapshots captured for this artifact.</Caption>
+              ) : (
+                artifact.snapshots.map((snapshot) => (
+                  <div className="snapshot-item" key={snapshot.id}>
+                    <div className="snapshot-header">
+                      <Caption>Source: {snapshot.source}</Caption>
+                      <Caption>Captured: {new Date(snapshot.capturedAt).toLocaleString()}</Caption>
+                    </div>
+                    <pre className="snapshot-payload">{JSON.stringify(snapshot.payload, null, 2)}</pre>
                   </div>
-                  <pre className="snapshot-payload">{JSON.stringify(snapshot.payload, null, 2)}</pre>
-                </div>
-              ))
-            )}
-          </div>
-        </details>
-      ))}
+                ))
+              )}
+            </div>
+          </details>
+        );
+      })}
     </div>
   );
 }
@@ -243,7 +300,7 @@ function RepositoryDetailBody({ id }: { id: string }) {
           <TabPanel id="issues" activeKey={tabs.activeKey}>
             <Card>
               <SectionHeading subtitle="Issues collected for this repository.">Issues</SectionHeading>
-              <ArtifactList artifacts={issues} accent="issue" />
+              <ArtifactList artifacts={issues} accent="issue" toast={toast} />
             </Card>
           </TabPanel>
 
@@ -252,14 +309,14 @@ function RepositoryDetailBody({ id }: { id: string }) {
               <SectionHeading subtitle="Pull requests collected for this repository.">
                 Pull Requests
               </SectionHeading>
-              <ArtifactList artifacts={pulls} accent="pr" />
+              <ArtifactList artifacts={pulls} accent="pr" toast={toast} />
             </Card>
           </TabPanel>
 
           <TabPanel id="commits" activeKey={tabs.activeKey}>
             <Card>
               <SectionHeading subtitle="Commits collected for this repository.">Commits</SectionHeading>
-              <ArtifactList artifacts={commits} accent="commit" />
+              <ArtifactList artifacts={commits} accent="commit" toast={toast} />
             </Card>
           </TabPanel>
 
