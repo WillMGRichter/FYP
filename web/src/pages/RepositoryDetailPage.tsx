@@ -23,59 +23,116 @@ const stateVariant = (state: string): StatusVariant => {
 };
 
 /**
- * Render a collection of artifact rows with expandable snapshots.
+ * Render a collection of artifact rows with expandable snapshots and AI summaries.
  */
-function ArtifactList({ artifacts, accent }: { artifacts: ArtifactDetail[]; accent: 'issue' | 'pr' | 'commit' }) {
+function ArtifactList({
+  artifacts,
+  accent,
+  toast,
+}: {
+  artifacts: ArtifactDetail[];
+  accent: 'issue' | 'pr' | 'commit';
+  toast: ReturnType<typeof useToast>['toast'];
+}) {
+  const [summaries, setSummaries] = useState<
+    Record<string, { aiSummary: string | null; aiSummaryGeneratedAt: string | null }>
+  >({});
+  const [summarisingId, setSummarisingId] = useState<string | null>(null);
+
   if (artifacts.length === 0) {
     return (
       <EmptyState title="Nothing collected here yet" body="Run a collection or use the browser extension to capture data for this repository." />
     );
   }
 
+  const handleSummarise = async (artifactId: string) => {
+    setSummarisingId(artifactId);
+    try {
+      const { artifact } = await api.summariseArtifact(artifactId);
+      setSummaries((prev) => ({ ...prev, [artifactId]: artifact }));
+    } catch (summariseError) {
+      toast.error(
+        summariseError instanceof Error ? summariseError.message : 'Summarisation failed',
+        'AI Summary',
+      );
+    } finally {
+      setSummarisingId(null);
+    }
+  };
+
   return (
     <div className="artifact-list">
-      {artifacts.map((artifact) => (
-        <details className="artifact-item" key={artifact.id}>
-          <summary className="artifact-summary">
-            <div className="artifact-title-block">
-              <span className={`artifact-number artifact-number-${accent}`}>
-                {artifact.githubNumber
-                  ? `#${artifact.githubNumber}`
-                  : artifact.githubSha?.slice(0, 7) ?? '—'}
-              </span>
-              <span className="artifact-title">{artifact.title ?? 'Untitled artifact'}</span>
-            </div>
-            <div className="artifact-meta">
-              {artifact.state && <Badge status={stateVariant(artifact.state)} label={artifact.state} />}
-              {artifact.authorLogin && <Caption>{artifact.authorLogin}</Caption>}
-              <Caption>
-                {artifact.snapshots.length} snapshot{artifact.snapshots.length === 1 ? '' : 's'}
-              </Caption>
-              {artifact.htmlUrl && (
-                <Link href={artifact.htmlUrl} external>
-                  GitHub
-                </Link>
+      {artifacts.map((artifact) => {
+        const summary = summaries[artifact.id] ?? artifact;
+
+        return (
+          <details className="artifact-item" key={artifact.id}>
+            <summary className="artifact-summary">
+              <div className="artifact-title-block">
+                <span className={`artifact-number artifact-number-${accent}`}>
+                  {artifact.githubNumber
+                    ? `#${artifact.githubNumber}`
+                    : artifact.githubSha?.slice(0, 7) ?? '—'}
+                </span>
+                <span className="artifact-title">{artifact.title ?? 'Untitled artifact'}</span>
+              </div>
+              <div className="artifact-meta">
+                {artifact.state && <Badge status={stateVariant(artifact.state)} label={artifact.state} />}
+                {artifact.authorLogin && <Caption>{artifact.authorLogin}</Caption>}
+                <Caption>
+                  {artifact.snapshots.length} snapshot{artifact.snapshots.length === 1 ? '' : 's'}
+                </Caption>
+                {artifact.htmlUrl && (
+                  <Link href={artifact.htmlUrl} external>
+                    GitHub
+                  </Link>
+                )}
+              </div>
+            </summary>
+
+            <div className="artifact-ai-summary">
+              <Button
+                variant="ghost"
+                size="sm"
+                loading={summarisingId === artifact.id}
+                disabled={summarisingId !== null}
+                onClick={(event) => {
+                  event.preventDefault();
+                  handleSummarise(artifact.id);
+                }}
+              >
+                {summary.aiSummary ? 'Re-summarise' : 'Summarise'}
+              </Button>
+              {summary.aiSummary && (
+                <>
+                  <Text>{summary.aiSummary}</Text>
+                  {summary.aiSummaryGeneratedAt && (
+                    <Caption>
+                      Generated {new Date(summary.aiSummaryGeneratedAt).toLocaleString()}
+                    </Caption>
+                  )}
+                </>
               )}
             </div>
-          </summary>
 
-          <div className="snapshot-list">
-            {artifact.snapshots.length === 0 ? (
-              <Caption>No snapshots captured for this artifact.</Caption>
-            ) : (
-              artifact.snapshots.map((snapshot) => (
-                <div className="snapshot-item" key={snapshot.id}>
-                  <div className="snapshot-header">
-                    <Caption>Source: {snapshot.source}</Caption>
-                    <Caption>Captured: {new Date(snapshot.capturedAt).toLocaleString()}</Caption>
+            <div className="snapshot-list">
+              {artifact.snapshots.length === 0 ? (
+                <Caption>No snapshots captured for this artifact.</Caption>
+              ) : (
+                artifact.snapshots.map((snapshot) => (
+                  <div className="snapshot-item" key={snapshot.id}>
+                    <div className="snapshot-header">
+                      <Caption>Source: {snapshot.source}</Caption>
+                      <Caption>Captured: {new Date(snapshot.capturedAt).toLocaleString()}</Caption>
+                    </div>
+                    <pre className="snapshot-payload">{JSON.stringify(snapshot.payload, null, 2)}</pre>
                   </div>
-                  <pre className="snapshot-payload">{JSON.stringify(snapshot.payload, null, 2)}</pre>
-                </div>
-              ))
-            )}
-          </div>
-        </details>
-      ))}
+                ))
+              )}
+            </div>
+          </details>
+        );
+      })}
     </div>
   );
 }
@@ -115,6 +172,42 @@ export default function RepositoryDetailPage() {
   return <RepositoryDetailBody key={id} id={id} />;
 }
 
+type OverviewEntityType = 'ISSUE' | 'PULL_REQUEST' | 'COMMIT';
+
+/**
+ * Render a repository-wide AI overview digest for one artifact type, with a
+ * button to (re-)generate it.
+ */
+function OverviewPanel({
+  label,
+  overview,
+  generatedAt,
+  loading,
+  disabled,
+  onGenerate,
+}: {
+  label: string;
+  overview: string | null | undefined;
+  generatedAt: string | null | undefined;
+  loading: boolean;
+  disabled: boolean;
+  onGenerate: () => void;
+}) {
+  return (
+    <div className="repo-overview">
+      <Button variant="secondary" size="sm" loading={loading} disabled={disabled} onClick={onGenerate}>
+        {overview ? `Re-summarise ${label}` : `Summarise ${label}`}
+      </Button>
+      {overview && (
+        <Alert variant="info" title={`${label} overview`}>
+          <Text>{overview}</Text>
+          {generatedAt && <Caption>Generated {new Date(generatedAt).toLocaleString()}</Caption>}
+        </Alert>
+      )}
+    </div>
+  );
+}
+
 /**
  * Loads and renders the dataset for a single repository.
  * Keyed by repository ID so navigating between repositories remounts cleanly.
@@ -126,6 +219,7 @@ function RepositoryDetailBody({ id }: { id: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState<'json' | 'csv' | null>(null);
+  const [overviewGeneratingType, setOverviewGeneratingType] = useState<OverviewEntityType | null>(null);
   const tabs = useTabs('issues');
 
   useEffect(() => {
@@ -160,6 +254,23 @@ function RepositoryDetailBody({ id }: { id: string }) {
       toast.error(exportError instanceof Error ? exportError.message : 'Export failed', 'Export');
     } finally {
       setExporting(null);
+    }
+  };
+
+  const handleOverview = async (entityType: OverviewEntityType) => {
+    if (!repository) return;
+    setOverviewGeneratingType(entityType);
+
+    try {
+      const { repository: updated } = await api.summariseOverview(repository.id, entityType);
+      setRepository((prev) => (prev ? { ...prev, ...updated } : prev));
+    } catch (overviewError) {
+      toast.error(
+        overviewError instanceof Error ? overviewError.message : 'Summarisation failed',
+        'AI Overview',
+      );
+    } finally {
+      setOverviewGeneratingType(null);
     }
   };
 
@@ -243,7 +354,15 @@ function RepositoryDetailBody({ id }: { id: string }) {
           <TabPanel id="issues" activeKey={tabs.activeKey}>
             <Card>
               <SectionHeading subtitle="Issues collected for this repository.">Issues</SectionHeading>
-              <ArtifactList artifacts={issues} accent="issue" />
+              <OverviewPanel
+                label="Issues"
+                overview={repository.aiIssuesOverview}
+                generatedAt={repository.aiIssuesOverviewGeneratedAt}
+                loading={overviewGeneratingType === 'ISSUE'}
+                disabled={overviewGeneratingType !== null || issues.length === 0}
+                onGenerate={() => handleOverview('ISSUE')}
+              />
+              <ArtifactList artifacts={issues} accent="issue" toast={toast} />
             </Card>
           </TabPanel>
 
@@ -252,14 +371,30 @@ function RepositoryDetailBody({ id }: { id: string }) {
               <SectionHeading subtitle="Pull requests collected for this repository.">
                 Pull Requests
               </SectionHeading>
-              <ArtifactList artifacts={pulls} accent="pr" />
+              <OverviewPanel
+                label="Pull Requests"
+                overview={repository.aiPullsOverview}
+                generatedAt={repository.aiPullsOverviewGeneratedAt}
+                loading={overviewGeneratingType === 'PULL_REQUEST'}
+                disabled={overviewGeneratingType !== null || pulls.length === 0}
+                onGenerate={() => handleOverview('PULL_REQUEST')}
+              />
+              <ArtifactList artifacts={pulls} accent="pr" toast={toast} />
             </Card>
           </TabPanel>
 
           <TabPanel id="commits" activeKey={tabs.activeKey}>
             <Card>
               <SectionHeading subtitle="Commits collected for this repository.">Commits</SectionHeading>
-              <ArtifactList artifacts={commits} accent="commit" />
+              <OverviewPanel
+                label="Commits"
+                overview={repository.aiCommitsOverview}
+                generatedAt={repository.aiCommitsOverviewGeneratedAt}
+                loading={overviewGeneratingType === 'COMMIT'}
+                disabled={overviewGeneratingType !== null || commits.length === 0}
+                onGenerate={() => handleOverview('COMMIT')}
+              />
+              <ArtifactList artifacts={commits} accent="commit" toast={toast} />
             </Card>
           </TabPanel>
 
