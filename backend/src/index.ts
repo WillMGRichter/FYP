@@ -401,6 +401,54 @@ function buildArtifactPrompt(
     .join('\n');
 }
 
+const OVERVIEW_SAMPLE_SIZE = 50;
+
+type OverviewEntityType = 'ISSUE' | 'PULL_REQUEST' | 'COMMIT';
+
+/** Maps each overview-eligible entity type to its pair of Prisma columns on Repository. */
+const OVERVIEW_FIELDS: Record<OverviewEntityType, { summary: string; generatedAt: string }> = {
+  ISSUE: { summary: 'aiIssuesOverview', generatedAt: 'aiIssuesOverviewGeneratedAt' },
+  PULL_REQUEST: { summary: 'aiPullsOverview', generatedAt: 'aiPullsOverviewGeneratedAt' },
+  COMMIT: { summary: 'aiCommitsOverview', generatedAt: 'aiCommitsOverviewGeneratedAt' },
+};
+
+/**
+ * Build a compact prompt summarising the overall themes across a sampled set of
+ * artifacts of one type, using only titles/state/author (not full bodies) to keep
+ * the prompt small regardless of how many items the repository has collected.
+ * @param entityType - The artifact type being summarised
+ * @param artifacts - The sampled artifacts (most recently updated first)
+ * @param totalCount - Total artifacts of this type collected for the repository
+ */
+function buildOverviewPrompt(
+  entityType: OverviewEntityType,
+  artifacts: { githubNumber: number | null; githubSha: string | null; title: string | null; state: string | null; authorLogin: string | null }[],
+  totalCount: number,
+): string {
+  const kindLabel = entityType === 'PULL_REQUEST' ? 'pull requests' : entityType === 'ISSUE' ? 'issues' : 'commits';
+
+  const lines = artifacts.map((artifact) => {
+    const ref = artifact.githubNumber ? `#${artifact.githubNumber}` : (artifact.githubSha?.slice(0, 7) ?? '—');
+    const state = artifact.state ? `, ${artifact.state}` : '';
+    const author = artifact.authorLogin ? ` by ${artifact.authorLogin}` : '';
+    return `${ref} — ${artifact.title ?? '(untitled)'}${state}${author}`;
+  });
+
+  const omittedNote =
+    artifacts.length < totalCount
+      ? `Showing the ${artifacts.length} most recently updated of ${totalCount} total.`
+      : null;
+
+  return [
+    `Summarise the overall themes and patterns across these ${artifacts.length} GitHub ${kindLabel} in 3-5 concise sentences for a software engineering researcher. Focus on common topics, notable state distribution, and anything unusual.`,
+    omittedNote,
+    '',
+    ...lines,
+  ]
+    .filter((line) => line !== null)
+    .join('\n');
+}
+
 /**
  * Retrieve and decrypt a GitHub token by ID, optionally scoped to an account.
  * @param tokenId - ID of the token record
@@ -717,6 +765,59 @@ app.post<{ Params: { id: string } }>(`${API_PREFIX}/artifacts/:id/summarise`, as
     return reply.code(502).send({ error: message });
   }
 });
+
+/**
+ * Summarise the overall themes across a repository's collected issues, pull requests,
+ * or commits (a sample of the most recently updated, not the full set) using Gemini.
+ */
+app.post<{ Params: { id: string }; Body: { entityType?: OverviewEntityType } }>(
+  `${API_PREFIX}/repositories/:id/overview`,
+  async (request, reply) => {
+    const entityType = request.body.entityType;
+    if (!entityType || !(entityType in OVERVIEW_FIELDS)) {
+      return reply.code(400).send({ error: 'entityType must be one of ISSUE, PULL_REQUEST, or COMMIT.' });
+    }
+
+    const repository = await prisma.repository.findUnique({ where: { id: request.params.id } });
+    if (!repository) {
+      return reply.code(404).send({ error: 'Repository was not found.' });
+    }
+
+    const [artifacts, totalCount] = await Promise.all([
+      prisma.repositoryArtifact.findMany({
+        where: { repositoryId: repository.id, type: entityType },
+        orderBy: { githubUpdatedAt: 'desc' },
+        take: OVERVIEW_SAMPLE_SIZE,
+        select: { githubNumber: true, githubSha: true, title: true, state: true, authorLogin: true },
+      }),
+      prisma.repositoryArtifact.count({ where: { repositoryId: repository.id, type: entityType } }),
+    ]);
+
+    if (artifacts.length === 0) {
+      return reply.code(400).send({ error: `This repository has no collected ${entityType.toLowerCase()} artifacts to summarise.` });
+    }
+
+    try {
+      const prompt = buildOverviewPrompt(entityType, artifacts, totalCount);
+      const summary = await summariseWithGemini(prompt);
+      const fields = OVERVIEW_FIELDS[entityType];
+
+      const updated = await prisma.repository.update({
+        where: { id: repository.id },
+        data: {
+          [fields.summary]: summary,
+          [fields.generatedAt]: new Date(),
+        },
+        select: { id: true, [fields.summary]: true, [fields.generatedAt]: true },
+      });
+
+      return jsonForResponse({ repository: updated });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown summarisation failure';
+      return reply.code(502).send({ error: message });
+    }
+  },
+);
 
 /** Export endpoint: download all collected data for a repository as JSON or CSV. */
 app.get<{ Params: { id: string }; Querystring: { format?: string } }>(

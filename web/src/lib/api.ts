@@ -41,6 +41,12 @@ export type Repository = {
   defaultBranch: string | null;
   collectedAt: string;
   updatedAt: string;
+  aiIssuesOverview?: string | null;
+  aiIssuesOverviewGeneratedAt?: string | null;
+  aiPullsOverview?: string | null;
+  aiPullsOverviewGeneratedAt?: string | null;
+  aiCommitsOverview?: string | null;
+  aiCommitsOverviewGeneratedAt?: string | null;
   _count?: {
     artifacts: number;
     snapshots: number;
@@ -290,6 +296,19 @@ export const api = {
     return request<{ artifact: { id: string; aiSummary: string | null; aiSummaryGeneratedAt: string | null } }>(
       `/artifacts/${encodeURIComponent(id)}/summarise`,
       { method: 'POST', body: JSON.stringify({}) },
+    );
+  },
+
+  /**
+   * Generate (or regenerate) an AI overview digest across a repository's collected
+   * issues, pull requests, or commits (a sample of the most recently updated, not the full set).
+   * @param repositoryId - Repository ID
+   * @param entityType - Which artifact type to summarise
+   */
+  async summariseOverview(repositoryId: string, entityType: 'ISSUE' | 'PULL_REQUEST' | 'COMMIT') {
+    return request<{ repository: Record<string, string | null> & { id: string } }>(
+      `/repositories/${encodeURIComponent(repositoryId)}/overview`,
+      { method: 'POST', body: JSON.stringify({ entityType }) },
     );
   },
 

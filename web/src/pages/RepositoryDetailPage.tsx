@@ -172,6 +172,42 @@ export default function RepositoryDetailPage() {
   return <RepositoryDetailBody key={id} id={id} />;
 }
 
+type OverviewEntityType = 'ISSUE' | 'PULL_REQUEST' | 'COMMIT';
+
+/**
+ * Render a repository-wide AI overview digest for one artifact type, with a
+ * button to (re-)generate it.
+ */
+function OverviewPanel({
+  label,
+  overview,
+  generatedAt,
+  loading,
+  disabled,
+  onGenerate,
+}: {
+  label: string;
+  overview: string | null | undefined;
+  generatedAt: string | null | undefined;
+  loading: boolean;
+  disabled: boolean;
+  onGenerate: () => void;
+}) {
+  return (
+    <div className="repo-overview">
+      <Button variant="secondary" size="sm" loading={loading} disabled={disabled} onClick={onGenerate}>
+        {overview ? `Re-summarise ${label}` : `Summarise ${label}`}
+      </Button>
+      {overview && (
+        <Alert variant="info" title={`${label} overview`}>
+          <Text>{overview}</Text>
+          {generatedAt && <Caption>Generated {new Date(generatedAt).toLocaleString()}</Caption>}
+        </Alert>
+      )}
+    </div>
+  );
+}
+
 /**
  * Loads and renders the dataset for a single repository.
  * Keyed by repository ID so navigating between repositories remounts cleanly.
@@ -183,6 +219,7 @@ function RepositoryDetailBody({ id }: { id: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState<'json' | 'csv' | null>(null);
+  const [overviewGeneratingType, setOverviewGeneratingType] = useState<OverviewEntityType | null>(null);
   const tabs = useTabs('issues');
 
   useEffect(() => {
@@ -217,6 +254,23 @@ function RepositoryDetailBody({ id }: { id: string }) {
       toast.error(exportError instanceof Error ? exportError.message : 'Export failed', 'Export');
     } finally {
       setExporting(null);
+    }
+  };
+
+  const handleOverview = async (entityType: OverviewEntityType) => {
+    if (!repository) return;
+    setOverviewGeneratingType(entityType);
+
+    try {
+      const { repository: updated } = await api.summariseOverview(repository.id, entityType);
+      setRepository((prev) => (prev ? { ...prev, ...updated } : prev));
+    } catch (overviewError) {
+      toast.error(
+        overviewError instanceof Error ? overviewError.message : 'Summarisation failed',
+        'AI Overview',
+      );
+    } finally {
+      setOverviewGeneratingType(null);
     }
   };
 
@@ -300,6 +354,14 @@ function RepositoryDetailBody({ id }: { id: string }) {
           <TabPanel id="issues" activeKey={tabs.activeKey}>
             <Card>
               <SectionHeading subtitle="Issues collected for this repository.">Issues</SectionHeading>
+              <OverviewPanel
+                label="Issues"
+                overview={repository.aiIssuesOverview}
+                generatedAt={repository.aiIssuesOverviewGeneratedAt}
+                loading={overviewGeneratingType === 'ISSUE'}
+                disabled={overviewGeneratingType !== null || issues.length === 0}
+                onGenerate={() => handleOverview('ISSUE')}
+              />
               <ArtifactList artifacts={issues} accent="issue" toast={toast} />
             </Card>
           </TabPanel>
@@ -309,6 +371,14 @@ function RepositoryDetailBody({ id }: { id: string }) {
               <SectionHeading subtitle="Pull requests collected for this repository.">
                 Pull Requests
               </SectionHeading>
+              <OverviewPanel
+                label="Pull Requests"
+                overview={repository.aiPullsOverview}
+                generatedAt={repository.aiPullsOverviewGeneratedAt}
+                loading={overviewGeneratingType === 'PULL_REQUEST'}
+                disabled={overviewGeneratingType !== null || pulls.length === 0}
+                onGenerate={() => handleOverview('PULL_REQUEST')}
+              />
               <ArtifactList artifacts={pulls} accent="pr" toast={toast} />
             </Card>
           </TabPanel>
@@ -316,6 +386,14 @@ function RepositoryDetailBody({ id }: { id: string }) {
           <TabPanel id="commits" activeKey={tabs.activeKey}>
             <Card>
               <SectionHeading subtitle="Commits collected for this repository.">Commits</SectionHeading>
+              <OverviewPanel
+                label="Commits"
+                overview={repository.aiCommitsOverview}
+                generatedAt={repository.aiCommitsOverviewGeneratedAt}
+                loading={overviewGeneratingType === 'COMMIT'}
+                disabled={overviewGeneratingType !== null || commits.length === 0}
+                onGenerate={() => handleOverview('COMMIT')}
+              />
               <ArtifactList artifacts={commits} accent="commit" toast={toast} />
             </Card>
           </TabPanel>

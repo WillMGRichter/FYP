@@ -119,33 +119,39 @@ model GitHubToken {
 }
 
 model Repository {
-  id              String                @id @default(cuid())
-  githubId        BigInt                @unique
-  owner           String
-  name            String
-  fullName        String                @unique
-  htmlUrl         String
-  description     String?
-  defaultBranch   String?
-  isPrivate       Boolean               @default(false)
-  isFork          Boolean               @default(false)
-  language        String?
-  licenseSpdxId   String? // intellectual property — what this data can be used/redistributed for
-  licenseName     String?
-  stars           Int                   @default(0)
-  forks           Int                   @default(0)
-  openIssues      Int                   @default(0)
-  pushedAt        DateTime?
-  githubCreatedAt DateTime?
-  githubUpdatedAt DateTime?
-  collectedAt     DateTime              @default(now())
-  createdAt       DateTime              @default(now())
-  updatedAt       DateTime              @updatedAt
-  artifacts       RepositoryArtifact[]
-  snapshots       EntitySnapshot[]
-  collectionRuns  CollectionRun[]
-  starredBy       StarredRepository[]
-  contributions   AccountContribution[]
+  id                           String                @id @default(cuid())
+  githubId                     BigInt                @unique
+  owner                        String
+  name                         String
+  fullName                     String                @unique
+  htmlUrl                      String
+  description                  String?
+  defaultBranch                String?
+  isPrivate                    Boolean               @default(false)
+  isFork                       Boolean               @default(false)
+  language                     String?
+  licenseSpdxId                String? // intellectual property — what this data can be used/redistributed for
+  licenseName                  String?
+  stars                        Int                   @default(0)
+  forks                        Int                   @default(0)
+  openIssues                   Int                   @default(0)
+  pushedAt                     DateTime?
+  githubCreatedAt              DateTime?
+  githubUpdatedAt              DateTime?
+  collectedAt                  DateTime              @default(now())
+  createdAt                    DateTime              @default(now())
+  updatedAt                    DateTime              @updatedAt
+  aiIssuesOverview             String?
+  aiIssuesOverviewGeneratedAt  DateTime?
+  aiPullsOverview              String?
+  aiPullsOverviewGeneratedAt   DateTime?
+  aiCommitsOverview            String?
+  aiCommitsOverviewGeneratedAt DateTime?
+  artifacts                    RepositoryArtifact[]
+  snapshots                    EntitySnapshot[]
+  collectionRuns               CollectionRun[]
+  starredBy                    StarredRepository[]
+  contributions                AccountContribution[]
 
   @@index([owner, name])
   @@index([language])
