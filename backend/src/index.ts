@@ -14,7 +14,7 @@ const API_PREFIX = '/api';
 const GITHUB_API = 'https://api.github.com';
 
 /** Maximum number of 100-item pages fetched per entity type during a sync sweep. */
-const MAX_SYNC_PAGES = 5;
+const MAX_SYNC_PAGES = 100;
 
 /**
  * Error raised when the GitHub API responds with a non-2xx status.
