@@ -47,6 +47,10 @@ export type Repository = {
   aiPullsOverviewGeneratedAt?: string | null;
   aiCommitsOverview?: string | null;
   aiCommitsOverviewGeneratedAt?: string | null;
+  isDeleted?: boolean;
+  deletedDetectedAt?: string | null;
+  renamedFrom?: string | null;
+  renameDetectedAt?: string | null;
   _count?: {
     artifacts: number;
     snapshots: number;
@@ -137,6 +141,80 @@ export type ArtifactDetail = {
 export type RepositoryDetail = Repository & {
   artifacts: ArtifactDetail[];
   snapshots: SnapshotDetail[];
+};
+
+/**
+ * A single field-level difference between two consecutive snapshots.
+ */
+export type FieldChange = {
+  path: string;
+  before: unknown;
+  after: unknown;
+  status: 'added' | 'removed' | 'changed';
+};
+
+/**
+ * A change detected between two consecutive snapshots of a single entity.
+ */
+export type EntityChangeEvent = {
+  fromSnapshotId: string;
+  toSnapshotId: string;
+  fromCapturedAt: string;
+  toCapturedAt: string;
+  fromSource: string;
+  toSource: string;
+  changedFieldCount: number;
+  fields: FieldChange[];
+};
+
+/**
+ * Change-history summary for one entity (issue, PR, or commit).
+ */
+export type EntityChangeHistory = {
+  key: string;
+  label: string | null;
+  title: string | null;
+  state: string | null;
+  htmlUrl: string | null;
+  entityType: 'ISSUE' | 'PULL_REQUEST' | 'COMMIT';
+  snapshotCount: number;
+  changeEvents: EntityChangeEvent[];
+};
+
+/**
+ * The full change history response for a repository.
+ */
+export type ChangeHistory = {
+  repository: { id: string; fullName: string };
+  totalEntitiesTracked: number;
+  totalChangeEvents: number;
+  entities: EntityChangeHistory[];
+};
+
+/**
+ * An artifact that was observed in earlier sweeps but not the latest run.
+ */
+export type MissingArtifact = {
+  id: string;
+  type: 'ISSUE' | 'PULL_REQUEST' | 'COMMIT';
+  githubNumber: number | null;
+  githubSha: string | null;
+  title: string | null;
+  state: string | null;
+  authorLogin: string | null;
+  htmlUrl: string | null;
+  collectedAt: string;
+};
+
+/**
+ * The disappearance ("Vanished") report for a repository.
+ */
+export type MissingReport = {
+  repository: Repository;
+  lastSweep: { id: string; startedAt: string; truncated: boolean } | null;
+  summary: { ISSUE: number; PULL_REQUEST: number; COMMIT: number };
+  totalMissing: number;
+  missingArtifacts: MissingArtifact[];
 };
 
 /**
@@ -263,6 +341,22 @@ export const api = {
    */
   async getRepository(id: string) {
     return request<{ repository: RepositoryDetail }>(`/repositories/${encodeURIComponent(id)}`);
+  },
+
+  /**
+   * Fetch field-level change history computed from consecutive snapshots.
+   * @param repositoryId - Repository record ID
+   */
+  async getChangeHistory(repositoryId: string) {
+    return request<ChangeHistory>(`/repositories/${encodeURIComponent(repositoryId)}/changes`);
+  },
+
+  /**
+   * Fetch the disappearance ("Vanished") report for a repository.
+   * @param repositoryId - Repository record ID
+   */
+  async getMissingReport(repositoryId: string) {
+    return request<MissingReport>(`/repositories/${encodeURIComponent(repositoryId)}/missing`);
   },
 
   /**

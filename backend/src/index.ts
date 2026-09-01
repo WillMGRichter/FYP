@@ -13,6 +13,24 @@ const prisma = new PrismaClient({ adapter });
 const API_PREFIX = '/api';
 const GITHUB_API = 'https://api.github.com';
 
+/** Maximum number of 100-item pages fetched per entity type during a sync sweep. */
+const MAX_SYNC_PAGES = 5;
+
+/**
+ * Error raised when the GitHub API responds with a non-2xx status.
+ * Carries the status code so callers can distinguish 404s (deleted or renamed
+ * entities) from rate limits or transient failures.
+ */
+class GitHubHttpError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'GitHubHttpError';
+    this.status = status;
+  }
+}
+
 type GitHubRepository = {
   id: number;
   full_name: string;
@@ -163,6 +181,87 @@ const decryptToken = (encryptedToken: string) => {
  */
 const payloadHash = (payload: unknown) =>
   crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+
+/**
+ * A single field-level difference between two consecutive snapshots.
+ */
+type SnapshotFieldChange = {
+  path: string;
+  before: unknown;
+  after: unknown;
+  status: 'added' | 'removed' | 'changed';
+};
+
+/**
+ * Flatten a JSON payload into stable path keys with primitive leaf values.
+ * Nested objects use dot notation and arrays use index brackets
+ * (e.g. "user.login" or "labels[0].name") so payloads can be compared key-by-key.
+ * @param value - Arbitrary decoded JSON value
+ * @param prefix - Path prefix accumulated during recursion
+ * @param out - Accumulator map of path to leaf value
+ * @returns Map of flattened paths to leaf values (empty containers preserved)
+ */
+function flattenPayload(value: unknown, prefix = '', out = new Map<string, unknown>()) {
+  if (value === null || typeof value !== 'object') {
+    out.set(prefix || '$', value);
+    return out;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      out.set(prefix || '$', []);
+    } else {
+      value.forEach((item, index) => flattenPayload(item, `${prefix}[${index}]`, out));
+    }
+    return out;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) {
+    out.set(prefix || '$', {});
+    return out;
+  }
+
+  for (const [key, item] of entries) {
+    flattenPayload(item, prefix ? `${prefix}.${key}` : key, out);
+  }
+  return out;
+}
+
+/**
+ * Structural equality for decoded JSON values.
+ */
+const jsonEquals = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Compute field-level differences between two snapshot payloads.
+ * Paths present only before are "removed", only after are "added",
+ * and present in both with different values are "changed".
+ * @param before - Older snapshot payload
+ * @param after - Newer snapshot payload
+ * @returns Sorted list of field-level changes (empty when payloads match)
+ */
+function diffSnapshotPayloads(before: unknown, after: unknown): SnapshotFieldChange[] {
+  const previous = flattenPayload(before);
+  const current = flattenPayload(after);
+  const changes: SnapshotFieldChange[] = [];
+
+  for (const [path, value] of previous) {
+    if (!current.has(path)) {
+      changes.push({ path, before: value, after: null, status: 'removed' });
+    } else if (!jsonEquals(current.get(path), value)) {
+      changes.push({ path, before: value, after: current.get(path), status: 'changed' });
+    }
+  }
+
+  for (const [path, value] of current) {
+    if (!previous.has(path)) {
+      changes.push({ path, before: null, after: value, status: 'added' });
+    }
+  }
+
+  return changes.sort((a, b) => a.path.localeCompare(b.path));
+}
 
 /**
  * Compute a SHA-256 hash of a session token for secure storage.
@@ -328,10 +427,59 @@ async function githubFetch<T>(path: string, token?: string): Promise<{ data: T; 
 
   const data = (await response.json()) as T & { message?: string };
   if (!response.ok) {
-    throw new Error(data.message ?? `GitHub request failed with status ${response.status}`);
+    throw new GitHubHttpError(data.message ?? `GitHub request failed with status ${response.status}`, response.status);
   }
 
   return { data, response };
+}
+
+/**
+ * Fetch a paginated GitHub collection endpoint, following "rel=next" Link
+ * headers until exhausted or the page cap is reached.
+ * @param path - API path including query params (should set per_page=100)
+ * @param token - Optional Bearer token for authenticated requests
+ * @param maxPages - Upper bound on pages fetched per call
+ * @returns Accumulated items plus whether results were truncated by the cap
+ */
+async function githubFetchPaginated<T>(
+  path: string,
+  token?: string | null,
+  maxPages = MAX_SYNC_PAGES,
+): Promise<{ items: T[]; truncated: boolean }> {
+  const items: T[] = [];
+  let nextUrl: string | null = `${GITHUB_API}${path}`;
+  let pagesFetched = 0;
+  let truncated = false;
+
+  while (nextUrl && pagesFetched < maxPages) {
+    const response: Response = await fetch(nextUrl, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'FYP-GitHub-Research-Tool',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({}))) as { message?: string };
+      throw new GitHubHttpError(
+        payload.message ?? `GitHub request failed with status ${response.status}`,
+        response.status,
+      );
+    }
+
+    const data = (await response.json()) as T[];
+    items.push(...data);
+    pagesFetched++;
+
+    const linkHeader = response.headers.get('link');
+    const nextMatch = linkHeader?.match(/<([^>]+)>;\s*rel="next"/);
+    nextUrl = nextMatch ? nextMatch[1] : null;
+  }
+
+  truncated = Boolean(nextUrl);
+  return { items, truncated };
 }
 
 const GEMINI_API = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent';
@@ -722,6 +870,196 @@ app.get<{ Params: { id: string } }>(`${API_PREFIX}/repositories/:id`, async (req
   }
 
   return jsonForResponse({ repository });
+});
+
+/**
+ * A detected change event between two consecutive snapshots of one entity.
+ */
+type EntityChangeEvent = {
+  fromSnapshotId: string;
+  toSnapshotId: string;
+  fromSource: string;
+  toSource: string;
+  fromCapturedAt: Date;
+  toCapturedAt: Date;
+  changedFieldCount: number;
+  fields: SnapshotFieldChange[];
+};
+
+/**
+ * The complete change history for a single tracked entity
+ * (the repository itself or one artifact).
+ */
+type EntityChangeHistory = {
+  key: string;
+  entityType: 'REPOSITORY' | 'ISSUE' | 'PULL_REQUEST' | 'COMMIT';
+  label: string | null;
+  githubNumber: number | null;
+  githubSha: string | null;
+  title: string | null;
+  state: string | null;
+  htmlUrl: string | null;
+  snapshotCount: number;
+  firstCapturedAt: Date | null;
+  lastCapturedAt: Date | null;
+  changeEvents: EntityChangeEvent[];
+};
+
+/**
+ * Change-history endpoint: field-level diffs between consecutive snapshots
+ * for the repository and every collected artifact.
+ */
+app.get<{ Params: { id: string } }>(`${API_PREFIX}/repositories/:id/changes`, async (request, reply) => {
+  const repository = await loadRepositoryWithSnapshots(request.params.id);
+  if (!repository) {
+    return reply.code(404).send({ error: 'Repository was not found.' });
+  }
+
+  /**
+   * Pair consecutive snapshots (oldest to newest) and record every
+   * non-empty field-level diff as a change event.
+   */
+  const buildChangeEvents = (
+    snapshots: { id: string; source: string; capturedAt: Date; payload: unknown }[],
+  ): EntityChangeEvent[] => {
+    const events: EntityChangeEvent[] = [];
+    for (let index = 1; index < snapshots.length; index++) {
+      const previous = snapshots[index - 1];
+      const current = snapshots[index];
+      const fields = diffSnapshotPayloads(previous.payload, current.payload);
+      if (fields.length === 0) continue;
+
+      events.push({
+        fromSnapshotId: previous.id,
+        toSnapshotId: current.id,
+        fromSource: previous.source,
+        toSource: current.source,
+        fromCapturedAt: previous.capturedAt,
+        toCapturedAt: current.capturedAt,
+        changedFieldCount: fields.length,
+        fields,
+      });
+    }
+    return events;
+  };
+
+  // Snapshots arrive newest-first from loadRepositoryWithSnapshots; step
+  // through them so each consecutive pair is compared in chronological order.
+  const oldestToNewest = (snapshots: typeof repository.snapshots) =>
+    [...snapshots].sort((a, b) => a.capturedAt.getTime() - b.capturedAt.getTime());
+
+  const entities: EntityChangeHistory[] = [
+    {
+      key: 'repository',
+      entityType: 'REPOSITORY',
+      label: repository.fullName,
+      githubNumber: null,
+      githubSha: null,
+      title: repository.fullName,
+      state: null,
+      htmlUrl: repository.htmlUrl,
+      snapshotCount: repository.snapshots.length,
+      firstCapturedAt: repository.snapshots[0]?.capturedAt ?? null,
+      lastCapturedAt:
+        repository.snapshots.length > 0
+          ? repository.snapshots[repository.snapshots.length - 1].capturedAt
+          : null,
+      changeEvents: buildChangeEvents(oldestToNewest(repository.snapshots)),
+    },
+    ...repository.artifacts.map((artifact) => {
+      const snapshots = oldestToNewest(artifact.snapshots);
+      return {
+        key: artifact.id,
+        entityType: artifact.type,
+        label:
+          artifact.githubNumber != null
+            ? `#${artifact.githubNumber}`
+            : artifact.githubSha?.slice(0, 7) ?? artifact.title ?? artifact.id,
+        githubNumber: artifact.githubNumber,
+        githubSha: artifact.githubSha,
+        title: artifact.title,
+        state: artifact.state,
+        htmlUrl: artifact.htmlUrl,
+        snapshotCount: artifact.snapshots.length,
+        firstCapturedAt: snapshots[0]?.capturedAt ?? null,
+        lastCapturedAt: snapshots.length > 0 ? snapshots[snapshots.length - 1].capturedAt : null,
+        changeEvents: buildChangeEvents(snapshots),
+      };
+    }),
+  ];
+
+  const totalChangeEvents = entities.reduce((sum, entity) => sum + entity.changeEvents.length, 0);
+
+  return jsonForResponse({
+    repository: { id: repository.id, fullName: repository.fullName },
+    totalEntitiesTracked: entities.length,
+    totalChangeEvents,
+    entities,
+  });
+});
+
+/**
+ * Disappearance report: artifacts that were captured in earlier sweeps but
+ * were no longer observed in the most recent completed collection run.
+ * Absence is only meaningful for full sweeps; truncated runs are flagged so
+ * clients can soften the messaging.
+ */
+app.get<{ Params: { id: string } }>(`${API_PREFIX}/repositories/:id/missing`, async (request, reply) => {
+  const repository = await prisma.repository.findUnique({ where: { id: request.params.id } });
+  if (!repository) {
+    return reply.code(404).send({ error: 'Repository was not found.' });
+  }
+
+  const [latestCompletedRun, missingArtifacts] = await Promise.all([
+    prisma.collectionRun.findFirst({
+      where: { repositoryId: repository.id, status: 'COMPLETED' },
+      orderBy: { startedAt: 'desc' },
+      select: { id: true, startedAt: true, truncated: true },
+    }),
+    prisma.repositoryArtifact.findMany({
+      where: {
+        repositoryId: repository.id,
+        collectedAt: { lt: repository.collectedAt },
+      },
+      orderBy: { collectedAt: 'asc' },
+      select: {
+        id: true,
+        type: true,
+        githubNumber: true,
+        githubSha: true,
+        title: true,
+        state: true,
+        authorLogin: true,
+        htmlUrl: true,
+        collectedAt: true,
+        githubCreatedAt: true,
+      },
+    }),
+  ]);
+
+  const summary: Record<'ISSUE' | 'PULL_REQUEST' | 'COMMIT', number> = { ISSUE: 0, PULL_REQUEST: 0, COMMIT: 0 };
+  for (const artifact of missingArtifacts) {
+    if (artifact.type === 'REPOSITORY') continue;
+    summary[artifact.type] += 1;
+  }
+
+  return jsonForResponse({
+    repository: {
+      id: repository.id,
+      fullName: repository.fullName,
+      isDeleted: repository.isDeleted,
+      deletedDetectedAt: repository.deletedDetectedAt,
+      renamedFrom: repository.renamedFrom,
+      renameDetectedAt: repository.renameDetectedAt,
+      collectedAt: repository.collectedAt,
+    },
+    lastSweep: latestCompletedRun
+      ? { id: latestCompletedRun.id, startedAt: latestCompletedRun.startedAt, truncated: latestCompletedRun.truncated }
+      : null,
+    summary,
+    totalMissing: missingArtifacts.length,
+    missingArtifacts,
+  });
 });
 
 /** Summarise an artifact's collected content (title/body or commit message) using Gemini. */
@@ -1212,7 +1550,50 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
   });
 
   try {
-    const { data: repoPayload } = await githubFetch<GitHubRepository>(`/repos/${owner}/${name}`, selectedToken?.raw);
+    let repoPayload: GitHubRepository;
+    try {
+      const result = await githubFetch<GitHubRepository>(`/repos/${owner}/${name}`, selectedToken?.raw);
+      repoPayload = result.data;
+    } catch (fetchError) {
+      // A 404 during re-collection of a known repository means it was deleted
+      // or made private upstream. Preserve every stored snapshot and flag it.
+      if (
+        fetchError instanceof GitHubHttpError &&
+        fetchError.status === 404 &&
+        (await prisma.repository.findFirst({
+          where: { OR: [{ owner, name }, { fullName: `${owner}/${name}` }] },
+        }))
+      ) {
+        await prisma.repository.updateMany({
+          where: { OR: [{ owner, name }, { fullName: `${owner}/${name}` }] },
+          data: { isDeleted: true, deletedDetectedAt: new Date() },
+        });
+        await prisma.collectionRun.update({
+          where: { id: run.id },
+          data: {
+            status: 'FAILED',
+            completedAt: new Date(),
+            errorMessage: 'Repository was deleted or made private upstream. Locally preserved snapshots remain available.',
+          },
+        });
+        return reply.code(410).send({
+          error: 'Repository was deleted or made private upstream. Locally preserved snapshots remain available.',
+          repositoryDeleted: true,
+        });
+      }
+      throw fetchError;
+    }
+
+    // Rename detection: same githubId but a different full name means the
+    // repository (or its owner) was renamed upstream.
+    const existingRepository = await prisma.repository.findUnique({
+      where: { githubId: BigInt(repoPayload.id) },
+    });
+    const renamedFrom =
+      existingRepository && existingRepository.fullName !== repoPayload.full_name
+        ? existingRepository.fullName
+        : null;
+
     const repository = await prisma.repository.upsert({
       where: { githubId: BigInt(repoPayload.id) },
       update: {
@@ -1232,6 +1613,8 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
         githubCreatedAt: parseDate(repoPayload.created_at),
         githubUpdatedAt: parseDate(repoPayload.updated_at),
         collectedAt: new Date(),
+        ...(renamedFrom ? { renamedFrom, renameDetectedAt: new Date() } : {}),
+        ...(existingRepository?.isDeleted ? { isDeleted: false, deletedDetectedAt: null } : {}),
       },
       create: {
         githubId: BigInt(repoPayload.id),
@@ -1266,11 +1649,15 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
       collectionRunId: run.id,
     });
 
-    const [{ data: issuePayloads }, { data: pullPayloads }, { data: commitPayloads }] = await Promise.all([
-      githubFetch<GitHubIssue[]>(`/repos/${owner}/${name}/issues?state=all&per_page=30`, selectedToken?.raw),
-      githubFetch<GitHubPullRequest[]>(`/repos/${owner}/${name}/pulls?state=all&per_page=30`, selectedToken?.raw),
-      githubFetch<GitHubCommit[]>(`/repos/${owner}/${name}/commits?per_page=30`, selectedToken?.raw),
+    const [issueSweep, pullSweep, commitSweep] = await Promise.all([
+      githubFetchPaginated<GitHubIssue>(`/repos/${owner}/${name}/issues?state=all&per_page=100`, selectedToken?.raw),
+      githubFetchPaginated<GitHubPullRequest>(`/repos/${owner}/${name}/pulls?state=all&per_page=100`, selectedToken?.raw),
+      githubFetchPaginated<GitHubCommit>(`/repos/${owner}/${name}/commits?per_page=100`, selectedToken?.raw),
     ]);
+    const issuePayloads = issueSweep.items;
+    const pullPayloads = pullSweep.items;
+    const commitPayloads = commitSweep.items;
+    const sweepTruncated = issueSweep.truncated || pullSweep.truncated || commitSweep.truncated;
 
     const issues = issuePayloads.filter((issue) => !issue.pull_request);
 
@@ -1436,13 +1823,14 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
         issuesCount: issues.length,
         pullsCount: pullPayloads.length,
         commitsCount: commitPayloads.length,
+        truncated: sweepTruncated,
       },
       include: {
         repository: true,
       },
     });
 
-    return reply.code(201).send(jsonForResponse({ run: completed }));
+    return reply.code(201).send(jsonForResponse({ run: completed, renamedFrom: renamedFrom ?? null }));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown collection failure';
     await prisma.collectionRun.update({

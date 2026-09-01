@@ -194,3 +194,74 @@
     align-items: flex-start;
   }
 }
+
+.change-event {
+  border: 1px solid var(--border, currentColor);
+  border-radius: var(--radius-md, 8px);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.change-event-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+
+.change-event-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm, 6px);
+  font-size: var(--font-size-sm, 0.875rem);
+}
+
+.field-diff-added {
+  background: rgba(46, 160, 67, 0.12);
+}
+
+.field-diff-removed {
+  background: rgba(248, 81, 73, 0.12);
+}
+
+.field-diff-changed {
+  background: rgba(210, 153, 34, 0.12);
+}
+
+.field-diff-path {
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+}
+
+.field-diff-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.field-diff-before {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.field-diff-after {
+  font-weight: 600;
+}
+
+.field-diff-arrow {
+  opacity: 0.5;
+}
+
+.vanished-summary {
+  margin-bottom: var(--space-4);
+}

@@ -640,8 +640,16 @@ export default function App() {
                       {repository.fullName}
                     </Link>
                     <Text secondary>{repository.description ?? 'No repository description available.'}</Text>
+                    <div className="repository-card-badges">
+                      <Badge status="draft" label={repository.language ?? 'Unknown'} />
+                      {repository.isDeleted && (
+                        <Badge status="closed" label="Deleted upstream" />
+                      )}
+                      {repository.renamedFrom && (
+                        <Badge status="progress" label={`Renamed from ${repository.renamedFrom}`} />
+                      )}
+                    </div>
                   </div>
-                  <Badge status="draft" label={repository.language ?? 'Unknown'} />
                 </div>
 
                 <div className="repository-facts">

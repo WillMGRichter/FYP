@@ -139,6 +139,10 @@ model Repository {
   githubCreatedAt              DateTime?
   githubUpdatedAt              DateTime?
   collectedAt                  DateTime              @default(now())
+  isDeleted                    Boolean               @default(false)
+  deletedDetectedAt            DateTime?
+  renamedFrom                  String?
+  renameDetectedAt             DateTime?
   createdAt                    DateTime              @default(now())
   updatedAt                    DateTime              @updatedAt
   aiIssuesOverview             String?
@@ -234,6 +238,7 @@ model CollectionRun {
   issuesCount      Int              @default(0)
   pullsCount       Int              @default(0)
   commitsCount     Int              @default(0)
+  truncated        Boolean          @default(false)
   account          Account?         @relation(fields: [accountId], references: [id], onDelete: SetNull)
   repository       Repository?      @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
   token            GitHubToken?     @relation(fields: [tokenId], references: [id], onDelete: SetNull)

@@ -7,7 +7,16 @@ import { Badge } from '../components/ui/Badge';
 import type { StatusVariant } from '../components/ui/Badge';
 import { Alert, EmptyState, Spinner, ToastContainer, useToast } from '../components/ui/Feedback';
 import { api } from '../lib/api';
-import type { ArtifactDetail, RepositoryDetail, SnapshotDetail } from '../lib/api';
+import type {
+  ArtifactDetail,
+  ChangeHistory,
+  EntityChangeEvent,
+  EntityChangeHistory,
+  MissingArtifact,
+  MissingReport,
+  RepositoryDetail,
+  SnapshotDetail,
+} from '../lib/api';
 import './RepositoryDetailPage.css';
 
 /**
@@ -163,6 +172,218 @@ function RepositorySnapshots({ snapshots }: { snapshots: SnapshotDetail[] }) {
 }
 
 /**
+ * Format an arbitrary diff value for display, truncating long payloads.
+ * @param value - Raw decoded JSON value
+ * @returns Compact string representation
+ */
+const formatDiffValue = (value: unknown): string => {
+  if (value === undefined) return '—';
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  if (text == null) return 'null';
+  return text.length > 120 ? `${text.slice(0, 120)}…` : text;
+};
+
+/**
+ * Render one detected change event: when it happened and which fields moved.
+ */
+function ChangeEventItem({ event }: { event: EntityChangeEvent }) {
+  const [expanded, setExpanded] = useState(false);
+  const visibleFields = expanded ? event.fields : event.fields.slice(0, 6);
+
+  return (
+    <div className="change-event">
+      <div className="change-event-header">
+        <Caption>{new Date(event.toCapturedAt).toLocaleString()}</Caption>
+        <Caption>
+          {event.fromSource} → {event.toSource}
+        </Caption>
+        <Badge status="progress" label={`${event.changedFieldCount} field${event.changedFieldCount === 1 ? '' : 's'}`} />
+      </div>
+      <div className="change-event-fields">
+        {visibleFields.map((field) => (
+          <div className={`field-diff field-diff-${field.status}`} key={field.path}>
+            <code className="field-diff-path">{field.path}</code>
+            <span className="field-diff-values">
+              <span className="field-diff-before">{formatDiffValue(field.before)}</span>
+              <span className="field-diff-arrow">→</span>
+              <span className="field-diff-after">{formatDiffValue(field.after)}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+      {event.fields.length > 6 && (
+        <Button variant="ghost" size="sm" onClick={() => setExpanded((open) => !open)}>
+          {expanded ? 'Show fewer fields' : `Show all ${event.fields.length} changed fields`}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Render the per-entity change history computed from consecutive snapshots.
+ */
+function ChangeHistoryPanel({
+  entities,
+  totalChangeEvents,
+}: {
+  entities: EntityChangeHistory[];
+  totalChangeEvents: number;
+}) {
+  const changedEntities = entities
+    .filter((entity) => entity.changeEvents.length > 0)
+    .sort(
+      (a, b) =>
+        new Date(b.changeEvents[b.changeEvents.length - 1]?.toCapturedAt ?? 0).getTime() -
+        new Date(a.changeEvents[a.changeEvents.length - 1]?.toCapturedAt ?? 0).getTime(),
+    );
+
+  if (changedEntities.length === 0) {
+    return (
+      <EmptyState
+        title="No changes detected yet"
+        body={
+          totalChangeEvents === 0
+            ? 'Change history appears once an entity has been captured two or more times with differing data. Re-run a collection or capture extension snapshots over time.'
+            : 'No entity has changed between captures yet.'
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="artifact-list">
+      {changedEntities.map((entity) => (
+        <details className="artifact-item" key={entity.key}>
+          <summary className="artifact-summary">
+            <div className="artifact-title-block">
+              <span
+                className={`artifact-number artifact-number-${
+                  entity.entityType === 'ISSUE'
+                    ? 'issue'
+                    : entity.entityType === 'PULL_REQUEST'
+                      ? 'pr'
+                      : entity.entityType === 'COMMIT'
+                        ? 'commit'
+                        : 'issue'
+                }`}
+              >
+                {entity.label ?? entity.key}
+              </span>
+              <span className="artifact-title">{entity.title ?? 'Untitled entity'}</span>
+            </div>
+            <div className="artifact-meta">
+              {entity.state && <Badge status={stateVariant(entity.state)} label={entity.state} />}
+              <Badge
+                status="draft"
+                label={`${entity.changeEvents.length} change${entity.changeEvents.length === 1 ? '' : 's'}`}
+              />
+              <Caption>
+                {entity.snapshotCount} snapshot{entity.snapshotCount === 1 ? '' : 's'}
+              </Caption>
+              {entity.htmlUrl && (
+                <Link href={entity.htmlUrl} external>
+                  GitHub
+                </Link>
+              )}
+            </div>
+          </summary>
+
+          <div className="snapshot-list">
+            {[...entity.changeEvents].reverse().map((event) => (
+              <ChangeEventItem event={event} key={`${event.fromSnapshotId}-${event.toSnapshotId}`} />
+            ))}
+          </div>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Human-readable label for an artifact type.
+ */
+const entityTypeLabel: Record<MissingArtifact['type'], string> = {
+  ISSUE: 'Issues',
+  PULL_REQUEST: 'Pull Requests',
+  COMMIT: 'Commits',
+};
+
+/**
+ * Render the disappearance report: artifacts no longer seen in the latest sweep.
+ */
+function VanishedPanel({ report }: { report: MissingReport }) {
+  if (report.totalMissing === 0) {
+    return (
+      <EmptyState
+        title="No vanished entities"
+        body="Every artifact captured in earlier sweeps was still present in the most recent collection run."
+      />
+    );
+  }
+
+  return (
+    <div>
+      {report.lastSweep?.truncated && (
+        <Alert variant="warning" title="Latest sweep was partial">
+          The most recent collection run hit its pagination cap, so absence from that run is not
+          conclusive evidence of deletion for older entities.
+        </Alert>
+      )}
+      <div className="repo-detail-facts vanished-summary">
+        <span>{report.summary.ISSUE} issues</span>
+        <span>{report.summary.PULL_REQUEST} pull requests</span>
+        <span>{report.summary.COMMIT} commits</span>
+        {report.lastSweep && (
+          <span>Last sweep {new Date(report.lastSweep.startedAt).toLocaleDateString()}</span>
+        )}
+      </div>
+
+      <div className="artifact-list">
+        {report.missingArtifacts.map((artifact) => (
+          <details className="artifact-item" key={artifact.id}>
+            <summary className="artifact-summary">
+              <div className="artifact-title-block">
+                <span
+                  className={`artifact-number artifact-number-${
+                    artifact.type === 'ISSUE'
+                      ? 'issue'
+                      : artifact.type === 'PULL_REQUEST'
+                        ? 'pr'
+                        : 'commit'
+                  }`}
+                >
+                  {artifact.githubNumber != null
+                    ? `#${artifact.githubNumber}`
+                    : artifact.githubSha?.slice(0, 7) ?? '—'}
+                </span>
+                <span className="artifact-title">{artifact.title ?? 'Untitled artifact'}</span>
+              </div>
+              <div className="artifact-meta">
+                <Badge status="draft" label={entityTypeLabel[artifact.type]} />
+                {artifact.state && <Badge status={stateVariant(artifact.state)} label={artifact.state} />}
+                <Caption>Last seen {new Date(artifact.collectedAt).toLocaleDateString()}</Caption>
+                {artifact.htmlUrl && (
+                  <Link href={artifact.htmlUrl} external>
+                    GitHub
+                  </Link>
+                )}
+              </div>
+            </summary>
+            <div className="snapshot-list">
+              <Caption>
+                Not observed in the latest sweep. The preserved snapshots for this entity remain part of
+                the dataset and are available in the other tabs.
+              </Caption>
+            </div>
+          </details>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Repository detail page: browse collected artifacts and snapshots,
  * and export the full dataset as JSON or CSV.
  */
@@ -220,6 +441,10 @@ function RepositoryDetailBody({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState<'json' | 'csv' | null>(null);
   const [overviewGeneratingType, setOverviewGeneratingType] = useState<OverviewEntityType | null>(null);
+  const [changeHistory, setChangeHistory] = useState<ChangeHistory | null>(null);
+  const [changeHistoryLoading, setChangeHistoryLoading] = useState(false);
+  const [missingReport, setMissingReport] = useState<MissingReport | null>(null);
+  const [missingLoading, setMissingLoading] = useState(false);
   const tabs = useTabs('issues');
 
   useEffect(() => {
@@ -272,6 +497,32 @@ function RepositoryDetailBody({ id }: { id: string }) {
     } finally {
       setOverviewGeneratingType(null);
     }
+  };
+
+  const handleChangeHistoryTab = () => {
+    if (!repository || changeHistoryLoading || changeHistory) return;
+    setChangeHistoryLoading(true);
+    api
+      .getChangeHistory(repository.id)
+      .then((data) => setChangeHistory(data))
+      .catch((loadError: Error) => toast.error(loadError.message, 'Change History'))
+      .finally(() => setChangeHistoryLoading(false));
+  };
+
+  const handleVanishedTab = () => {
+    if (!repository || missingLoading || missingReport) return;
+    setMissingLoading(true);
+    api
+      .getMissingReport(repository.id)
+      .then((data) => setMissingReport(data))
+      .catch((loadError: Error) => toast.error(loadError.message, 'Vanished'))
+      .finally(() => setMissingLoading(false));
+  };
+
+  const handleTabChange = (key: string) => {
+    tabs.onChange(key);
+    if (key === 'changes') handleChangeHistoryTab();
+    if (key === 'missing') handleVanishedTab();
   };
 
   return (
@@ -346,9 +597,11 @@ function RepositoryDetailBody({ id }: { id: string }) {
               { key: 'pulls', label: 'Pull Requests', count: pulls.length },
               { key: 'commits', label: 'Commits', count: commits.length },
               { key: 'repository', label: 'Repository', count: repositorySnapshots.length },
+              { key: 'changes', label: 'Change History' },
+              { key: 'missing', label: 'Vanished' },
             ]}
             activeKey={tabs.activeKey}
-            onChange={tabs.onChange}
+            onChange={handleTabChange}
           />
 
           <TabPanel id="issues" activeKey={tabs.activeKey}>
@@ -404,6 +657,53 @@ function RepositoryDetailBody({ id }: { id: string }) {
                 Repository Data
               </SectionHeading>
               <RepositorySnapshots snapshots={repositorySnapshots} />
+            </Card>
+          </TabPanel>
+
+          <TabPanel id="changes" activeKey={tabs.activeKey}>
+            <Card>
+              <SectionHeading subtitle="Field-level differences between consecutive snapshots of each entity.">
+                Change History
+              </SectionHeading>
+              {changeHistoryLoading && (
+                <div className="repo-detail-loading">
+                  <Spinner />
+                  <Text secondary>Computing change history</Text>
+                </div>
+              )}
+              {!changeHistoryLoading && changeHistory && (
+                <ChangeHistoryPanel
+                  entities={changeHistory.entities}
+                  totalChangeEvents={changeHistory.totalChangeEvents}
+                />
+              )}
+              {!changeHistoryLoading && !changeHistory && (
+                <EmptyState
+                  title="Change history not loaded"
+                  body="Re-open the Change History tab to compute field-level diffs between snapshots."
+                />
+              )}
+            </Card>
+          </TabPanel>
+
+          <TabPanel id="missing" activeKey={tabs.activeKey}>
+            <Card>
+              <SectionHeading subtitle="Artifacts present in earlier sweeps but absent from the latest run.">
+                Vanished
+              </SectionHeading>
+              {missingLoading && (
+                <div className="repo-detail-loading">
+                  <Spinner />
+                  <Text secondary>Loading disappearance report</Text>
+                </div>
+              )}
+              {!missingLoading && missingReport && <VanishedPanel report={missingReport} />}
+              {!missingLoading && !missingReport && (
+                <EmptyState
+                  title="Disappearance report not loaded"
+                  body="Re-open the Vanished tab to compare the latest sweep against earlier collections."
+                />
+              )}
             </Card>
           </TabPanel>
         </>

@@ -348,3 +348,10 @@
     grid-template-columns: 1fr;
   }
 }
+
+.repository-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
