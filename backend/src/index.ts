@@ -201,6 +201,63 @@ type SnapshotFieldChange = {
  * @param out - Accumulator map of path to leaf value
  * @returns Map of flattened paths to leaf values (empty containers preserved)
  */
+/**
+ * Replace unpaired UTF-16 surrogates with U+FFFD and strip NUL bytes
+ * (U+0000) so strings remain valid when serialised to Postgres JSON/text.
+ * GitHub data occasionally contains these (e.g. truncated binary or emoji in
+ * commit messages); lone surrogates and NUL cause Postgres to reject the row
+ * with "unsupported Unicode escape sequence" / "invalid input syntax for json".
+ */
+function sanitiseText(value: string): string {
+  let result = '';
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code === 0x0000) {
+      result += '\uFFFD';
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        result += value.slice(index, index + 2);
+        index++;
+      } else {
+        result += '\uFFFD';
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      result += '\uFFFD';
+    } else {
+      result += value[index];
+    }
+  }
+  return result;
+}
+
+/** Sanitise one string field (null-safe) before writing to the database. */
+const cleanString = <T extends string | null | undefined>(value: T): T => {
+  if (value == null) return value;
+  return sanitiseText(value) as T;
+};
+
+/**
+ * Recursively sanitise a payload (deep copy) replacing unpaired surrogates and
+ * NUL bytes so it is safe to write as Postgres JSON.
+ */
+function sanitisePayload(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return sanitiseText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitisePayload(item));
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = sanitisePayload(nestedValue);
+    }
+    return out;
+  }
+  return value;
+}
+
 function flattenPayload(value: unknown, prefix = '', out = new Map<string, unknown>()) {
   if (value === null || typeof value !== 'object') {
     out.set(prefix || '$', value);
@@ -634,7 +691,8 @@ async function createSnapshot(input: {
   payload: unknown;
   collectionRunId?: string;
 }) {
-  const hash = payloadHash(input.payload);
+  const payload = sanitisePayload(input.payload);
+  const hash = payloadHash(payload);
   const existing = await prisma.entitySnapshot.findFirst({
     where: {
       repositoryId: input.repositoryId,
@@ -661,7 +719,7 @@ async function createSnapshot(input: {
       artifactId: input.artifactId,
       entityType: input.entityType,
       source: input.source,
-      payload: input.payload as object,
+      payload: payload as object,
       payloadHash: hash,
       collectionRunId: input.collectionRunId,
     },
@@ -1597,12 +1655,12 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
     const repository = await prisma.repository.upsert({
       where: { githubId: BigInt(repoPayload.id) },
       update: {
-        owner: repoPayload.owner.login,
-        name: repoPayload.name,
-        fullName: repoPayload.full_name,
-        htmlUrl: repoPayload.html_url,
-        description: repoPayload.description,
-        defaultBranch: repoPayload.default_branch,
+        owner: cleanString(repoPayload.owner.login),
+        name: cleanString(repoPayload.name),
+        fullName: cleanString(repoPayload.full_name),
+        htmlUrl: cleanString(repoPayload.html_url),
+        description: cleanString(repoPayload.description),
+        defaultBranch: cleanString(repoPayload.default_branch),
         isPrivate: repoPayload.private,
         isFork: repoPayload.fork,
         language: repoPayload.language,
@@ -1618,12 +1676,12 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
       },
       create: {
         githubId: BigInt(repoPayload.id),
-        owner: repoPayload.owner.login,
-        name: repoPayload.name,
-        fullName: repoPayload.full_name,
-        htmlUrl: repoPayload.html_url,
-        description: repoPayload.description,
-        defaultBranch: repoPayload.default_branch,
+        owner: cleanString(repoPayload.owner.login),
+        name: cleanString(repoPayload.name),
+        fullName: cleanString(repoPayload.full_name),
+        htmlUrl: cleanString(repoPayload.html_url),
+        description: cleanString(repoPayload.description),
+        defaultBranch: cleanString(repoPayload.default_branch),
         isPrivate: repoPayload.private,
         isFork: repoPayload.fork,
         language: repoPayload.language,
@@ -1672,10 +1730,10 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
         },
         update: {
           githubNumber: issue.number,
-          title: issue.title,
+          title: cleanString(issue.title),
           state: issue.state,
-          authorLogin: issue.user?.login,
-          htmlUrl: issue.html_url,
+          authorLogin: cleanString(issue.user?.login),
+          htmlUrl: cleanString(issue.html_url),
           closedAt: parseDate(issue.closed_at),
           githubCreatedAt: parseDate(issue.created_at),
           githubUpdatedAt: parseDate(issue.updated_at),
@@ -1686,10 +1744,10 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
           type: 'ISSUE',
           githubNodeId: issue.node_id,
           githubNumber: issue.number,
-          title: issue.title,
+          title: cleanString(issue.title),
           state: issue.state,
-          authorLogin: issue.user?.login,
-          htmlUrl: issue.html_url,
+          authorLogin: cleanString(issue.user?.login),
+          htmlUrl: cleanString(issue.html_url),
           closedAt: parseDate(issue.closed_at),
           githubCreatedAt: parseDate(issue.created_at),
           githubUpdatedAt: parseDate(issue.updated_at),
@@ -1717,10 +1775,10 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
         },
         update: {
           githubNumber: pull.number,
-          title: pull.title,
+          title: cleanString(pull.title),
           state: pull.state,
-          authorLogin: pull.user?.login,
-          htmlUrl: pull.html_url,
+          authorLogin: cleanString(pull.user?.login),
+          htmlUrl: cleanString(pull.html_url),
           mergedAt: parseDate(pull.merged_at),
           closedAt: parseDate(pull.closed_at),
           githubCreatedAt: parseDate(pull.created_at),
@@ -1732,10 +1790,10 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
           type: 'PULL_REQUEST',
           githubNodeId: pull.node_id,
           githubNumber: pull.number,
-          title: pull.title,
+          title: cleanString(pull.title),
           state: pull.state,
-          authorLogin: pull.user?.login,
-          htmlUrl: pull.html_url,
+          authorLogin: cleanString(pull.user?.login),
+          htmlUrl: cleanString(pull.html_url),
           mergedAt: parseDate(pull.merged_at),
           closedAt: parseDate(pull.closed_at),
           githubCreatedAt: parseDate(pull.created_at),
@@ -1764,9 +1822,9 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
         },
         update: {
           githubSha: commit.sha,
-          title: commit.commit.message.split('\n')[0],
-          authorLogin: commit.author?.login,
-          htmlUrl: commit.html_url,
+          title: cleanString(commit.commit.message.split('\n')[0]),
+          authorLogin: cleanString(commit.author?.login),
+          htmlUrl: cleanString(commit.html_url),
           githubCreatedAt: parseDate(commit.commit.author?.date),
           githubUpdatedAt: parseDate(commit.commit.committer?.date),
           collectedAt: new Date(),
@@ -1776,9 +1834,9 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
           type: 'COMMIT',
           githubNodeId: commit.node_id,
           githubSha: commit.sha,
-          title: commit.commit.message.split('\n')[0],
-          authorLogin: commit.author?.login,
-          htmlUrl: commit.html_url,
+          title: cleanString(commit.commit.message.split('\n')[0]),
+          authorLogin: cleanString(commit.author?.login),
+          htmlUrl: cleanString(commit.html_url),
           githubCreatedAt: parseDate(commit.commit.author?.date),
           githubUpdatedAt: parseDate(commit.commit.committer?.date),
         },
@@ -1833,6 +1891,7 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
     return reply.code(201).send(jsonForResponse({ run: completed, renamedFrom: renamedFrom ?? null }));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown collection failure';
+    request.log.error({ syncError: message, stack: error instanceof Error ? error.stack : String(error) }, 'collection failed');
     await prisma.collectionRun.update({
       where: { id: run.id },
       data: {
