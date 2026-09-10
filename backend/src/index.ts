@@ -539,6 +539,24 @@ async function githubFetchPaginated<T>(
   return { items, truncated };
 }
 
+/**
+ * Run a paginated GitHub sweep, treating a 404 as "this entity type is not
+ * available for this repository" (e.g. Pull Requests disabled on torvalds/linux)
+ * instead of failing the whole collection run.
+ */
+async function sweepSafely<T>(
+  fetchSweep: () => Promise<{ items: T[]; truncated: boolean }>,
+): Promise<{ items: T[]; truncated: boolean }> {
+  try {
+    return await fetchSweep();
+  } catch (error) {
+    if (error instanceof GitHubHttpError && error.status === 404) {
+      return { items: [], truncated: false };
+    }
+    throw error;
+  }
+}
+
 const GEMINI_API = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent';
 
 /**
@@ -1708,9 +1726,15 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
     });
 
     const [issueSweep, pullSweep, commitSweep] = await Promise.all([
-      githubFetchPaginated<GitHubIssue>(`/repos/${owner}/${name}/issues?state=all&per_page=100`, selectedToken?.raw),
-      githubFetchPaginated<GitHubPullRequest>(`/repos/${owner}/${name}/pulls?state=all&per_page=100`, selectedToken?.raw),
-      githubFetchPaginated<GitHubCommit>(`/repos/${owner}/${name}/commits?per_page=100`, selectedToken?.raw),
+      sweepSafely<GitHubIssue>(() =>
+        githubFetchPaginated<GitHubIssue>(`/repos/${owner}/${name}/issues?state=all&per_page=100`, selectedToken?.raw),
+      ),
+      sweepSafely<GitHubPullRequest>(() =>
+        githubFetchPaginated<GitHubPullRequest>(`/repos/${owner}/${name}/pulls?state=all&per_page=100`, selectedToken?.raw),
+      ),
+      sweepSafely<GitHubCommit>(() =>
+        githubFetchPaginated<GitHubCommit>(`/repos/${owner}/${name}/commits?per_page=100`, selectedToken?.raw),
+      ),
     ]);
     const issuePayloads = issueSweep.items;
     const pullPayloads = pullSweep.items;
