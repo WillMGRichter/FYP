@@ -1,5 +1,7 @@
 import 'dotenv/config'
 import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { PrismaClient } from '../generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 // install prismaPg + dotenv node packages
@@ -15,60 +17,190 @@ if (!GITHUB_TOKEN_SECRET) {
     throw new Error('GITHUB_TOKEN_SECRET env var is required for backfill')
 }
 
+// ---------------------------------------------------------------------------
+// Structured logging
+// ---------------------------------------------------------------------------
+// Every request attempt (success, retry, or final failure) is written as one
+// JSON line to logs/extraction-<repo>-<timestamp>.log, plus a running summary
+// per entity type (commits/issues/pull_requests) so we can see afterwards
+// whether extraction reliability depends on repo scale.
+
+type LogEvent = {
+  ts: string;
+  repo: string;
+  entityType: string;
+  url: string;
+  attempt: number;
+  status: 'success' | 'retry' | 'failure';
+  httpStatus?: number;
+  latencyMs?: number;
+  error?: string;
+};
+
+class ExtractionLogger {
+  private logPath: string;
+  private summary: Record<string, { attempted: number; succeeded: number; failed: number; retries: number }> = {};
+
+  constructor(repoLabel: string) {
+    const dir = path.resolve(process.cwd(), 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    this.logPath = path.join(dir, `extraction-${repoLabel.replace('/', '_')}-${ts}.log`);
+  }
+
+  private ensure(entityType: string) {
+    if (!this.summary[entityType]) {
+      this.summary[entityType] = { attempted: 0, succeeded: 0, failed: 0, retries: 0 };
+    }
+    return this.summary[entityType];
+  }
+
+  log(event: LogEvent) {
+    fs.appendFileSync(this.logPath, JSON.stringify(event) + '\n');
+    const s = this.ensure(event.entityType);
+    if (event.attempt === 1) s.attempted += 1;
+    if (event.status === 'success') s.succeeded += 1;
+    if (event.status === 'retry') s.retries += 1;
+    if (event.status === 'failure') s.failed += 1;
+  }
+
+  writeSummary() {
+    const summaryPath = this.logPath.replace('.log', '.summary.json');
+    fs.writeFileSync(summaryPath, JSON.stringify(this.summary, null, 2));
+    console.log(`\nExtraction summary (${this.logPath}):`);
+    console.table(this.summary);
+    return summaryPath;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Retry wrapper
+// ---------------------------------------------------------------------------
+// Retries on transient failures: 5xx (incl. the 504s seen on larger repos),
+// 429 (secondary rate limit), and network-level errors (ECONNRESET etc).
+// Uses exponential backoff with jitter, capped at maxDelayMs.
+// Does NOT retry on 4xx (other than 429) — those are permanent (bad token,
+// repo not found, etc) and should fail fast.
+
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+
+async function withRetry<T>(
+  fn: (attempt: number) => Promise<T>,
+  opts: {
+    logger: ExtractionLogger;
+    repo: string;
+    entityType: string;
+    url: string;
+    maxRetries?: number;
+    baseDelayMs?: number;
+    maxDelayMs?: number;
+  }
+): Promise<T> {
+  const { logger, repo, entityType, url, maxRetries = 5, baseDelayMs = 1000, maxDelayMs = 30_000 } = opts;
+  let attempt = 0;
+
+  while (true) {
+    attempt += 1;
+    const start = Date.now();
+    try {
+      const result = await fn(attempt);
+      logger.log({
+        ts: new Date().toISOString(),
+        repo, entityType, url, attempt,
+        status: 'success',
+        latencyMs: Date.now() - start,
+      });
+      return result;
+    } catch (err: any) {
+      const httpStatus = err?.httpStatus as number | undefined;
+      const retryable = httpStatus ? RETRYABLE_STATUS.has(httpStatus) : true; // network errors: retry
+      const exhausted = attempt > maxRetries;
+
+      logger.log({
+        ts: new Date().toISOString(),
+        repo, entityType, url, attempt,
+        status: retryable && !exhausted ? 'retry' : 'failure',
+        httpStatus,
+        latencyMs: Date.now() - start,
+        error: err?.message,
+      });
+
+      if (!retryable || exhausted) {
+        throw err;
+      }
+
+      const backoff = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
+      const jitter = Math.random() * backoff * 0.3;
+      const waitMs = backoff + jitter;
+      console.log(`  [retry] ${entityType} attempt ${attempt} failed (${httpStatus ?? err?.message}), waiting ${Math.round(waitMs)}ms...`);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+}
+
 function hashPayload(payload: unknown): string {
   return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
 
-async function fetchAllPages<T>(url: string): Promise<T[]> {
-    const results: T[] = [];
-    let nextUrl: string | null = url;
+async function rawFetch(url: string): Promise<Response> {
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${GITHUB_TOKEN_SECRET}`,
+      Accept: 'application/vnd.github+json',
+    },
+  });
 
-    while (nextUrl) {
-        const res = await fetch(nextUrl, {
-            headers: {
-                Authorization: `Bearer ${GITHUB_TOKEN_SECRET}`,
-                Accept: 'application/vnd.github+json',
-            },
-        });
-    
-        if (!res.ok) {
-            throw new Error(`GitHJub API ${res.status}: ${await res.text()}`)
-        }
-        
-        // get remaining limit for fetching
-        const remaining = res.headers.get('x-ratelimit-remaining');
-        if (remaining && parseInt(remaining, 10) < 5) {
-            const resetAt = parseInt(res.headers.get('x-ratelimit-reset') || '0', 10) * 1000;
-            const waitMs = resetAt - Date.now();
-            if (waitMs > 0) {
-                console.log(`Rate limit low, waiting ${Math.ceil(waitMs / 1000)}s...`)
-                await new Promise((r) => setTimeout(r, waitMs))
-            }
-        }
-
-        const data = await(res.json()) as T[];
-        results.push(...data);
-
-        const linkHeader = res.headers.get('link');
-        const nextMatch = linkHeader?.match(/<([^>]+)>;\s*rel="next"/);
-        nextUrl = nextMatch ? nextMatch[1] : null;
+  // Proactive rate-limit throttling (unchanged from original, still useful
+  // alongside retries — this avoids tripping the limit in the first place).
+  const remaining = res.headers.get('x-ratelimit-remaining');
+  if (remaining && parseInt(remaining, 10) < 5) {
+    const resetAt = parseInt(res.headers.get('x-ratelimit-reset') || '0', 10) * 1000;
+    const waitMs = resetAt - Date.now();
+    if (waitMs > 0) {
+      console.log(`Rate limit low, waiting ${Math.ceil(waitMs / 1000)}s...`);
+      await new Promise((r) => setTimeout(r, waitMs));
     }
+  }
 
-    return results;
+  if (!res.ok) {
+    const body = await res.text();
+    const error: any = new Error(`GitHub API ${res.status}: ${body}`);
+    error.httpStatus = res.status;
+    throw error;
+  }
+  return res;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${GITHUB_TOKEN_SECRET}`, Accept: 'application/vnd.github+json' },
-  });
-  if (!res.ok) throw new Error(`GitHub API ${res.status}: ${await res.text()}`);
+async function fetchAllPages<T>(url: string, logger: ExtractionLogger, repo: string, entityType: string): Promise<T[]> {
+  const results: T[] = [];
+  let nextUrl: string | null = url;
+
+  while (nextUrl) {
+    const currentUrl = nextUrl;
+    const res = await withRetry(() => rawFetch(currentUrl), { logger, repo, entityType, url: currentUrl });
+    const data = (await res.json()) as T[];
+    results.push(...data);
+
+    const linkHeader = res.headers.get('link');
+    const nextMatch = linkHeader?.match(/<([^>]+)>;\s*rel="next"/);
+    nextUrl = nextMatch ? nextMatch[1] : null;
+  }
+
+  return results;
+}
+
+async function fetchJson<T>(url: string, logger: ExtractionLogger, repo: string, entityType: string): Promise<T> {
+  const res = await withRetry(() => rawFetch(url), { logger, repo, entityType, url });
   return res.json() as Promise<T>;
 }
 
-// Look up or create the Repository row, keyed on the real githubId/fullName.
-async function ensureRepository(owner: string, repo: string) {
-  const data = await fetchJson<any>(`${BASE}/repos/${owner}/${repo}`);
- 
+// ---------------------------------------------------------------------------
+// Same DB logic as before (unchanged)
+// ---------------------------------------------------------------------------
+
+async function ensureRepository(owner: string, repo: string, logger: ExtractionLogger) {
+  const data = await fetchJson<any>(`${BASE}/repos/${owner}/${repo}`, logger, `${owner}/${repo}`, 'repository');
+
   return prisma.repository.upsert({
     where: { fullName: data.full_name },
     update: {
@@ -104,11 +236,6 @@ async function ensureRepository(owner: string, repo: string) {
   });
 }
 
-/**
- * Ensure a RepositoryArtifact row exists for this entity 
- * (the "identity" row one per issue/PR/commit, regardless of how many times it's been captured),
- * then insert a new EntitySnapshot only if the payload actually changed.
- */
 async function recordSnapshot(params: {
   repositoryId: string;
   type: 'COMMIT' | 'ISSUE' | 'PULL_REQUEST' | 'REPOSITORY';
@@ -157,9 +284,9 @@ async function recordSnapshot(params: {
       githubUpdatedAt: params.githubUpdatedAt,
     },
   });
- 
+
   const payloadHash = hashPayload(params.payload);
- 
+
   await prisma.entitySnapshot.upsert({
     where: {
       repositoryId_artifactId_entityType_payloadHash: {
@@ -169,7 +296,7 @@ async function recordSnapshot(params: {
         payloadHash,
       },
     },
-    update: {}, // identical content already recorded — no-op
+    update: {},
     create: {
       repositoryId: params.repositoryId,
       artifactId: artifact.id,
@@ -181,11 +308,9 @@ async function recordSnapshot(params: {
   });
 }
 
+async function backfillCommits(owner: string, repo: string, repositoryId: string, logger: ExtractionLogger) {
+  const commits = await fetchAllPages<any>(`${BASE}/repos/${owner}/${repo}/commits?per_page=100`, logger, `${owner}/${repo}`, 'commits');
 
-// Fetch and persist all commits for a repo
-async function backfillCommits(owner:string, repo:string, repositoryId: string) {
-    const commits = await fetchAllPages<any>(`${BASE}/repos/${owner}/${repo}/commits?per_page=100`);
- 
   for (const c of commits) {
     await recordSnapshot({
       repositoryId,
@@ -205,14 +330,14 @@ async function backfillCommits(owner:string, repo:string, repositoryId: string) 
       },
     });
   }
- 
+
   console.log(`Backfilled ${commits.length} commits`);
 }
 
-async function backfillIssues(owner: string, repo: string, repositoryId: string) {
-  const issues = await fetchAllPages<any>(`${BASE}/repos/${owner}/${repo}/issues?state=all&per_page=100`);
+async function backfillIssues(owner: string, repo: string, repositoryId: string, logger: ExtractionLogger) {
+  const issues = await fetchAllPages<any>(`${BASE}/repos/${owner}/${repo}/issues?state=all&per_page=100`, logger, `${owner}/${repo}`, 'issues');
   const trueIssues = issues.filter((i) => !i.pull_request);
- 
+
   for (const i of trueIssues) {
     await recordSnapshot({
       repositoryId,
@@ -239,16 +364,16 @@ async function backfillIssues(owner: string, repo: string, repositoryId: string)
       },
     });
   }
- 
+
   console.log(`Backfilled ${trueIssues.length} issues`);
 }
- 
-async function backfillPullRequests(owner: string, repo: string, repositoryId: string) {
-  const prList = await fetchAllPages<any>(`${BASE}/repos/${owner}/${repo}/pulls?state=all&per_page=100`);
- 
+
+async function backfillPullRequests(owner: string, repo: string, repositoryId: string, logger: ExtractionLogger) {
+  const prList = await fetchAllPages<any>(`${BASE}/repos/${owner}/${repo}/pulls?state=all&per_page=100`, logger, `${owner}/${repo}`, 'pull_requests');
+
   for (const p of prList) {
-    const detail = await fetchJson<any>(`${BASE}/repos/${owner}/${repo}/pulls/${p.number}`);
- 
+    const detail = await fetchJson<any>(`${BASE}/repos/${owner}/${repo}/pulls/${p.number}`, logger, `${owner}/${repo}`, 'pull_requests');
+
     await recordSnapshot({
       repositoryId,
       type: 'PULL_REQUEST',
@@ -280,31 +405,33 @@ async function backfillPullRequests(owner: string, repo: string, repositoryId: s
       },
     });
   }
- 
+
   console.log(`Backfilled ${prList.length} pull requests`);
 }
 
 async function main() {
-    const target = process.argv[2]; // get owner/repo from command line
-    if (!target || !target.includes('/')) {
-        throw new Error('Usage: backfill.ts <owner>/<repo>');
-    }
-    const [owner, repo] = target.split('/');
-    
-    const repository = await ensureRepository(owner, repo);
-    console.log(`Repository ${repository.fullName} ready (id: ${repository.id})`);
-    
-    await backfillCommits(owner, repo, repository.id)
-    await backfillIssues(owner, repo, repository.id)
-    await backfillPullRequests(owner, repo, repository.id)
-    
-    await prisma.$disconnect();
+  const target = process.argv[2];
+  if (!target || !target.includes('/')) {
+    throw new Error('Usage: backfill.ts <owner>/<repo>');
+  }
+  const [owner, repo] = target.split('/');
+  const logger = new ExtractionLogger(target);
+
+  const repository = await ensureRepository(owner, repo, logger);
+  console.log(`Repository ${repository.fullName} ready (id: ${repository.id})`);
+
+  await backfillCommits(owner, repo, repository.id, logger);
+  await backfillIssues(owner, repo, repository.id, logger);
+  await backfillPullRequests(owner, repo, repository.id, logger);
+
+  logger.writeSummary();
+  await prisma.$disconnect();
 }
 
 main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-})
+  console.error(err);
+  process.exit(1);
+});
 
 // usage: pnpm exec tsx src/scripts/backfill.ts <owner>/<repo>
 // need to install tsx via pnpm add -D tsx
