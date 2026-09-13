@@ -62,6 +62,35 @@ function getActiveStatus(commits: any) {
 
 function getContributorInterest(commits: any) {
     // avg duration between contributor activity
+    const byAuthor = new Map<string, number[]>()
+
+    for (const c of commits) {
+        if (!c.authorLogin || !c.githubCreatedAt) continue
+        const ts = new Date(c.githubCreatedAt).getTime()
+        if (!byAuthor.has(c.authorLogin)) byAuthor.set(c.authorLogin, [])
+        byAuthor.get(c.authorLogin)!.push(ts)
+    }
+
+    const perAuthorAvgGapDays: { author: string; avgGapDays: number; commitCount: number }[] = []
+
+    for (const [author, timestamps] of byAuthor) {
+        if (timestamps.length < 2) continue // need at least 2 commits to have a gap
+        const sorted = [...timestamps].sort((a, b) => a - b)
+        const gaps = sorted.slice(1).map((t, i) => (t - sorted[i]) / 86_400_000)
+        const avgGapDays = gaps.reduce((a, b) => a + b, 0) / gaps.length
+        perAuthorAvgGapDays.push({ author, avgGapDays, commitCount: timestamps.length })
+    }
+
+      const overallAvgGapDays = perAuthorAvgGapDays.length
+    ? perAuthorAvgGapDays.reduce((a, b) => a + b.avgGapDays, 0) / perAuthorAvgGapDays.length
+    : NaN // no contributor had 2+ commits - can't measure return interval
+ 
+    return {
+        overallAvgGapDays,
+        eligibleContributors: perAuthorAvgGapDays.length, // contributors with 2+ commits
+        excludedSingleCommitContributors: byAuthor.size - perAuthorAvgGapDays.length,
+        perAuthor: perAuthorAvgGapDays,
+    }
 }
 
 function getContributorCount(commits: any) {
