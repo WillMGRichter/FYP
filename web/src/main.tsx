@@ -4,7 +4,6 @@
  */
 
 import './index.css'
-import ComponentShowcase  from './pages/ComponentShowcase.tsx'
 import App from './App.tsx'
 import './components/styles/tokens.css';
 import React from 'react';
@@ -23,7 +22,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route element={<Layout />}>
           <Route path="/" element={<App />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
-          <Route path="/components" element={<ComponentShowcase />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/extension" element={<ExtensionPage />} />
           <Route path="/repositories/:id" element={<RepositoryDetailPage />} />

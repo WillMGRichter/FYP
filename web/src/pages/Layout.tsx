@@ -12,7 +12,6 @@ export default function Layout() {
   const navItems = [
     { key: 'home', label: 'Home', href: '/' },
     { key: 'analytics', label: 'Analytics', href: '/analytics' },
-    { key: 'components', label: 'Components', href: '/components' },
     { key: 'settings', label: 'Settings', href: '/settings' },
     { key: 'extension', label: 'Extension', href: '/extension' },
   ];
