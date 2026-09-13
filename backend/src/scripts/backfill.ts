@@ -39,7 +39,7 @@ type LogEvent = {
 
 class ExtractionLogger {
   private logPath: string;
-  private summary: Record<string, { attempted: number; succeeded: number; failed: number; retries: number }> = {};
+  private summary: Record<string, { attempted: number; succeeded: number; failed: number; retries: number; durationMs?: number }> = {};
 
   constructor(repoLabel: string) {
     const dir = path.resolve(process.cwd(), 'logs');
@@ -64,12 +64,36 @@ class ExtractionLogger {
     if (event.status === 'failure') s.failed += 1;
   }
 
+  // Records how long a whole phase (e.g. all of backfillCommits) took, in ms.
+  // Separate from the per-request `latencyMs` in log(), which times individual
+  // API calls — this times the end-to-end phase including every page, retry,
+  // and DB write.
+  recordDuration(entityType: string, durationMs: number) {
+    fs.appendFileSync(this.logPath, JSON.stringify({
+      ts: new Date().toISOString(), entityType, status: 'phase_complete', durationMs,
+    }) + '\n');
+    this.ensure(entityType).durationMs = durationMs;
+  }
+
   writeSummary() {
     const summaryPath = this.logPath.replace('.log', '.summary.json');
     fs.writeFileSync(summaryPath, JSON.stringify(this.summary, null, 2));
     console.log(`\nExtraction summary (${this.logPath}):`);
     console.table(this.summary);
     return summaryPath;
+  }
+}
+
+// Wraps an async phase (backfillCommits/Issues/PullRequests) with a wall-clock
+// timer and records it into the logger's summary under `entityType`.
+async function timed<T>(entityType: string, logger: ExtractionLogger, fn: () => Promise<T>): Promise<T> {
+  const start = Date.now();
+  try {
+    return await fn();
+  } finally {
+    const durationMs = Date.now() - start;
+    logger.recordDuration(entityType, durationMs);
+    console.log(`  ${entityType} took ${(durationMs / 1000).toFixed(1)}s`);
   }
 }
 
@@ -417,12 +441,16 @@ async function main() {
   const [owner, repo] = target.split('/');
   const logger = new ExtractionLogger(target);
 
+  const overallStart = Date.now();
   const repository = await ensureRepository(owner, repo, logger);
   console.log(`Repository ${repository.fullName} ready (id: ${repository.id})`);
 
-  await backfillCommits(owner, repo, repository.id, logger);
-  await backfillIssues(owner, repo, repository.id, logger);
-  await backfillPullRequests(owner, repo, repository.id, logger);
+  await timed('commits', logger, () => backfillCommits(owner, repo, repository.id, logger));
+  await timed('issues', logger, () => backfillIssues(owner, repo, repository.id, logger));
+  await timed('pull_requests', logger, () => backfillPullRequests(owner, repo, repository.id, logger));
+
+  const totalMs = Date.now() - overallStart;
+  console.log(`\nTotal extraction time: ${(totalMs / 1000).toFixed(1)}s`);
 
   logger.writeSummary();
   await prisma.$disconnect();
