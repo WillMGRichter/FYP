@@ -60,27 +60,16 @@ function getActiveStatus(commits: any) {
     return activeStatus
 }
 
-function getReleaseCadence(releases: any) {
-    // release cadence: avg duration between releases. Min x releases
-}
-
-function getCodeSize(commits: any) {
-    // code size: how many lines of code are changed on average per commit
-    // formula: 
-    const avg = ""
-    const med = ""
-}
-
-function getVolatileFiles(commits: any) {
-    // Volative Files: files which are frequently updated
-}
-
 function getContributorInterest(commits: any) {
     // avg duration between contributor activity
 }
 
 function getContributorCount(commits: any) {
     // get number of contributors on a specific repository
+    const authors = new Set(
+        commits.map((c: any) => c.authorLogin).filter((a: string | null) => !!a)
+    )
+    return authors.size
 }
 
 async function main() {
