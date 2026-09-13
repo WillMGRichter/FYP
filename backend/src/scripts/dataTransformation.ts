@@ -1,32 +1,39 @@
 import 'dotenv/config'
 import { PrismaClient } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { finalization } from 'node:process';
 
 
 const connectionString = `${process.env.DATABASE_URL}`;
 const adapter = new PrismaPg({ connectionString });
 const prisma = new PrismaClient({ adapter });
+const DAY_MS = 86400000
+const DAYS_IN_MONTH = 30
+const TODAY = Date.now()
 
 async function getCommitMetrics(repository_id: string) {
-    const repos = await prisma.repository.findMany()
-    const repo = repos[0].id
-    console.log(repos[0])
-    const test = await prisma.repositoryArtifact.findMany()
+    const repos = await prisma.repository.findMany() // get all repos in db
+    const repo = repos[repos.length-1].id // get specific repo id
+    // get commits for specific repo
     const commits = await prisma.repositoryArtifact.findMany({
         where: {repositoryId: repo, type: 'COMMIT'},
         orderBy: {githubCreatedAt: 'asc'},
     });
-    console.log(commits)
-    const commitCadence = getCommitCadence(commits)
-    const commitBusFactor = getCommitBusFactor(commits)
+    const test = commits[commits.length-1]
+    console.log(test)
+    
+    
+    // const commitActivity = getActiveStatus(commits)
+    // const commitCadence = getCommitCadence(commits)
+    // const commitBusFactor = getCommitBusFactor(commits)
 
-    return {commitCadence, commitBusFactor}
+    // return {commitCadence, commitBusFactor}
 }
 
 function getCommitCadence(commits:any) {
     // commit cadence: avg days between commits
     const dates = commits.map(c => new Date(c.githubCreatedAt!).getTime()).sort((a:any,b:any)=>a-b)
-    const gaps = dates.slice(1).map((d:any, i:any) => (d - dates[i]) / 86_400_000)
+    const gaps = dates.slice(1).map((d:any, i:any) => (d - dates[i]) / DAY_MS)
     const avgCadenceDays = gaps.reduce((a, b)=>a+b, 0) / gaps.length
 
     
@@ -44,6 +51,13 @@ async function getCommitBusFactor(commits: any) {
 
 function getActiveStatus(commits: any) {
     // active if last commit was < 1 month ago, inactive otherwise
+    const finalIdx = commits.length - 1
+    const lastCommit = commits[finalIdx].githubCreatedAt
+    // const secondLastCommit = commits[finalIdx-1].githubCreatedAt
+    const difference = ((TODAY - new Date(lastCommit).getTime()) / DAY_MS )
+    const activeStatus = difference < DAYS_IN_MONTH
+    // console.log(`Final:  ${lastCommit}, Now: ${today}, active: ${activeStatus}`)
+    return activeStatus
 }
 
 function getReleaseCadence(releases: any) {
