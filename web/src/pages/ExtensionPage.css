@@ -1,0 +1,82 @@
+.extension-page {
+  min-height: calc(100vh - 52px);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-8);
+  text-align: left;
+}
+
+.extension-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.extension-download-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.extension-download-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1 1 420px;
+}
+
+.extension-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.extension-download-action {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+  flex: 0 0 auto;
+}
+
+.extension-feature-list {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.extension-feature-list li::marker {
+  color: var(--color-blue-400);
+}
+
+.extension-steps-flow,
+.extension-install-steps,
+.extension-config-steps,
+.extension-flow-steps {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.extension-steps-flow li::marker,
+.extension-install-steps li::marker,
+.extension-config-steps li::marker,
+.extension-flow-steps li::marker {
+  color: var(--color-blue-400);
+  font-weight: var(--weight-medium);
+}
+
+@media (max-width: 900px) {
+  .extension-page {
+    padding: var(--space-5);
+  }
+}

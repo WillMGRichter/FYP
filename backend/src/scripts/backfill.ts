@@ -200,13 +200,18 @@ async function fetchAllPages<T>(url: string, logger: ExtractionLogger, repo: str
   let nextUrl: string | null = url;
 
   while (nextUrl) {
-    const currentUrl = nextUrl;
-    const res = await withRetry(() => rawFetch(currentUrl), { logger, repo, entityType, url: currentUrl });
+    const currentUrl: string = nextUrl;
+    const res: Response = await withRetry<Response>((_attempt: number) => rawFetch(currentUrl), {
+      logger,
+      repo,
+      entityType,
+      url: currentUrl,
+    });
     const data = (await res.json()) as T[];
     results.push(...data);
 
-    const linkHeader = res.headers.get('link');
-    const nextMatch = linkHeader?.match(/<([^>]+)>;\s*rel="next"/);
+    const linkHeader: string | null = res.headers.get('link');
+    const nextMatch: RegExpMatchArray | null = linkHeader?.match(/<([^>]+)>;\s*rel="next"/) ?? null;
     nextUrl = nextMatch ? nextMatch[1] : null;
   }
 
@@ -214,7 +219,12 @@ async function fetchAllPages<T>(url: string, logger: ExtractionLogger, repo: str
 }
 
 async function fetchJson<T>(url: string, logger: ExtractionLogger, repo: string, entityType: string): Promise<T> {
-  const res = await withRetry(() => rawFetch(url), { logger, repo, entityType, url });
+  const res: Response = await withRetry<Response>((_attempt: number) => rawFetch(url), {
+    logger,
+    repo,
+    entityType,
+    url,
+  });
   return res.json() as Promise<T>;
 }
 

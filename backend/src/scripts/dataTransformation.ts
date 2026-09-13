@@ -32,9 +32,9 @@ async function getCommitMetrics(repository_id: string) {
 
 function getCommitCadence(commits:any) {
     // commit cadence: avg days between commits
-    const dates = commits.map(c => new Date(c.githubCreatedAt!).getTime()).sort((a:any,b:any)=>a-b)
-    const gaps = dates.slice(1).map((d:any, i:any) => (d - dates[i]) / DAY_MS)
-    const avgCadenceDays = gaps.reduce((a, b)=>a+b, 0) / gaps.length
+    const dates = commits.map((c: any) => new Date(c.githubCreatedAt!).getTime()).sort((a: any, b: any) => a - b)
+    const gaps = dates.slice(1).map((d: any, i: any) => (d - dates[i]) / DAY_MS)
+    const avgCadenceDays = gaps.reduce((a: number, b: number) => a + b, 0) / gaps.length
 
     
     return {avgCadenceDays} 

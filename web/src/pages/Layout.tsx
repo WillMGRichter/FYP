@@ -14,6 +14,7 @@ export default function Layout() {
     { key: 'analytics', label: 'Analytics', href: '/analytics' },
     { key: 'components', label: 'Components', href: '/components' },
     { key: 'settings', label: 'Settings', href: '/settings' },
+    { key: 'extension', label: 'Extension', href: '/extension' },
   ];
   const activeKey = navItems.find((item) => item.href === location.pathname)?.key ?? 'home';
 

@@ -14,6 +14,7 @@ import SettingsPage from './pages/SettingsPage';
 import Layout from './pages/Layout';
 import RepositoryDetailPage from './pages/RepositoryDetailPage.tsx';
 import AnalyticsPage from './pages/AnalyticsPage.tsx';
+import ExtensionPage from './pages/ExtensionPage.tsx';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -24,6 +25,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/components" element={<ComponentShowcase />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/extension" element={<ExtensionPage />} />
           <Route path="/repositories/:id" element={<RepositoryDetailPage />} />
         </Route>
       </Routes>
