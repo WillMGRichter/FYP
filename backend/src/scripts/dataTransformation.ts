@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import * as fs from 'node:fs'
 import { PrismaClient } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
@@ -111,10 +112,53 @@ async function getCommitMetrics(repository_id: string) {
 }
 
 async function runBatch() {
+    // run commit metric analysis on all repos
+
+    // get all repos
+    const repos = await prisma.repository.findMany({
+        select: { id: true, fullName: true },
+    });
+    console.log(`Found ${repos.length} repositories`)
+
+    const rows: Record<string, any>[] = [];
+    const failures: { fullName: string; error: string }[] = []
+
+    for (const [i, repo] of repos.entries()) {
+        const start = Date.now();
+        try {
+            const metrics = await getCommitMetrics(repo.id);
+            const durationMs = Date.now() - start;
+            rows.push({ repositoryId: repo.id, fullName: repo.fullName, ...metrics, durationMs});
+        } catch (err: any) {
+            failures.push({ fullName: repo.fullName, error: err.message});
+            console.error(`[${i+1}/${repos.length}] ${repo.fullName} - FAILED: ${err.message}`);
+        }
+    }
+
+    if (rows.length > 0) {
+        const headers = Object.keys(rows[0]);
+        const csvLines = [
+            headers.join(','),
+            ...rows.map(r => headers.map(h => {
+                const v = r[h];
+                if (v === null || v === undefined) return '';
+                if (typeof v === 'string' && v.includes(',')) return `"${v}"`;
+                return v;
+            }).join(',')),
+        ];
+        fs.writeFileSync('repo_metrics.csv', csvLines.join('\n'));
+        console.log(`\nWrote ${rows.length} rows to repo_metrics.csv`)
+    }
+
+    if (failures.length > 0 ) {
+        fs.writeFileSync(`repo_metrics_failures.json`, JSON.stringify(failures, null, 2))
+        console.log(`${failures.length} repo(s) failed - see repo_metrics_failures.json`)
+    }
 }
 
 
 async function main() {
+    await runBatch();
     await prisma.$disconnect();
 }
 
