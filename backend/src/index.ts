@@ -907,28 +907,56 @@ app.post<{ Body: TokenPayload }>(`${API_PREFIX}/github/tokens`, async (request, 
  * Load a repository with its artifacts and all entity snapshots.
  * Artifact-linked snapshots and repository-level snapshots (artifactId null) are
  * returned together so clients can render the full collected dataset.
+ *
+ * Snapshots are fetched flat and re-attached in memory: a nested Prisma
+ * `include` generates an IN-clause over every artifact id, which exceeds
+ * Postgres's parameter limit (~65535) once a repository has tens of thousands
+ * of artifacts (P2029).
  * @param id - Repository record ID
  */
 async function loadRepositoryWithSnapshots(id: string) {
-  return prisma.repository.findUnique({
+  const repository = await prisma.repository.findUnique({
     where: { id },
     include: {
       artifacts: {
         orderBy: [{ type: 'asc' }, { githubNumber: 'asc' }],
-        include: {
-          snapshots: {
-            orderBy: { capturedAt: 'desc' },
-            select: { id: true, source: true, capturedAt: true, payload: true },
-          },
-        },
-      },
-      snapshots: {
-        where: { artifactId: null },
-        orderBy: { capturedAt: 'desc' },
-        select: { id: true, source: true, capturedAt: true, payload: true },
       },
     },
   });
+
+  if (!repository) return null;
+
+  const artifactSnapshots = await prisma.entitySnapshot.findMany({
+    where: { repositoryId: id },
+    orderBy: { capturedAt: 'desc' },
+    select: { id: true, source: true, capturedAt: true, payload: true, artifactId: true },
+  });
+
+  const snapshotsByArtifact = new Map<string, typeof artifactSnapshots>();
+  const repositorySnapshots: typeof artifactSnapshots = [];
+  for (const snapshot of artifactSnapshots) {
+    if (snapshot.artifactId) {
+      const bucket = snapshotsByArtifact.get(snapshot.artifactId) ?? [];
+      bucket.push(snapshot);
+      snapshotsByArtifact.set(snapshot.artifactId, bucket);
+    } else {
+      repositorySnapshots.push(snapshot);
+    }
+  }
+
+  return {
+    ...repository,
+    artifacts: repository.artifacts.map((artifact) => ({
+      ...artifact,
+      snapshots: (snapshotsByArtifact.get(artifact.id) ?? []).map((snapshot) => ({
+        id: snapshot.id,
+        source: snapshot.source,
+        capturedAt: snapshot.capturedAt,
+        payload: snapshot.payload,
+      })),
+    })),
+    snapshots: repositorySnapshots.map(({ artifactId: _key, ...snapshot }) => snapshot),
+  };
 }
 
 /**
