@@ -141,6 +141,33 @@ export default function App() {
       .finally(() => setLoading(false));
   }, []);
 
+  const hasActiveRun = runs.some((run) => run.status === 'PENDING' || run.status === 'RUNNING');
+
+  useEffect(() => {
+    if (!hasActiveRun) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const tick = async () => {
+      try {
+        const response = await api.listCollections();
+        if (disposed) return;
+        setRuns(response.runs);
+        if (response.runs.some((run) => run.status === 'RUNNING')) {
+          timer = setTimeout(tick, 3000);
+        }
+      } catch {
+        timer = setTimeout(tick, 3000);
+      }
+    };
+
+    timer = setTimeout(tick, 3000);
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [hasActiveRun]);
+
   const clearAuthForm = () => {
     setEmail('');
     setDisplayName('');
@@ -465,10 +492,14 @@ export default function App() {
                   <div>
                     <div className="activity-title">{run.repository?.fullName ?? 'Repository lookup'}</div>
                     <Caption>{formatDate(run.startedAt)}</Caption>
+                    {(run.status === 'PENDING' || run.status === 'RUNNING') && run.phase && (
+                      <Caption className="activity-phase">{run.phase}</Caption>
+                    )}
                   </div>
                   <Badge status={statusVariant(run.status)} label={run.status.toLowerCase()} />
                   <Caption>
                     {run.issuesCount} issues, {run.pullsCount} PRs, {run.commitsCount} commits
+                    {run.progressItems ? ` · ${run.progressItems} new saved` : ''}
                   </Caption>
                 </div>
               ))}

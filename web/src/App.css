@@ -133,6 +133,11 @@
   white-space: nowrap;
 }
 
+.activity-phase {
+  color: var(--color-blue-400);
+  font-weight: var(--weight-medium);
+}
+
 .loading-row,
 .loading-card {
   display: flex;

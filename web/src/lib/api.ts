@@ -78,6 +78,8 @@ export type CollectionRun = {
   issuesCount: number;
   pullsCount: number;
   commitsCount: number;
+  phase?: string | null;
+  progressItems?: number;
   repository?: {
     fullName: string;
     htmlUrl: string;

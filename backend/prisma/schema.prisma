@@ -239,6 +239,8 @@ model CollectionRun {
   pullsCount       Int              @default(0)
   commitsCount     Int              @default(0)
   truncated        Boolean          @default(false)
+  phase            String?
+  progressItems    Int              @default(0)
   account          Account?         @relation(fields: [accountId], references: [id], onDelete: SetNull)
   repository       Repository?      @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
   token            GitHubToken?     @relation(fields: [tokenId], references: [id], onDelete: SetNull)

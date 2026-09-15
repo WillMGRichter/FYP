@@ -13,9 +13,6 @@ const prisma = new PrismaClient({ adapter });
 const API_PREFIX = '/api';
 const GITHUB_API = 'https://api.github.com';
 
-/** Maximum number of 100-item pages fetched per entity type during a sync sweep. */
-const MAX_SYNC_PAGES = 100;
-
 /**
  * Error raised when the GitHub API responds with a non-2xx status.
  * Carries the status code so callers can distinguish 404s (deleted or renamed
@@ -492,23 +489,23 @@ async function githubFetch<T>(path: string, token?: string): Promise<{ data: T; 
 
 /**
  * Fetch a paginated GitHub collection endpoint, following "rel=next" Link
- * headers until exhausted or the page cap is reached.
+ * headers until exhausted.
  * @param path - API path including query params (should set per_page=100)
  * @param token - Optional Bearer token for authenticated requests
- * @param maxPages - Upper bound on pages fetched per call
- * @returns Accumulated items plus whether results were truncated by the cap
+ * @param onPage - Optional callback invoked after each page. Return false to
+ *   stop fetching further pages (e.g. incremental sync caught up).
+ * @returns Accumulated items plus whether results were truncated
  */
 async function githubFetchPaginated<T>(
   path: string,
   token?: string | null,
-  maxPages = MAX_SYNC_PAGES,
+  onPage?: (items: T[], page: number) => boolean | void | Promise<boolean | void>,
 ): Promise<{ items: T[]; truncated: boolean }> {
   const items: T[] = [];
   let nextUrl: string | null = `${GITHUB_API}${path}`;
-  let pagesFetched = 0;
-  let truncated = false;
+  let page = 0;
 
-  while (nextUrl && pagesFetched < maxPages) {
+  while (nextUrl) {
     const response: Response = await fetch(nextUrl, {
       headers: {
         Accept: 'application/vnd.github+json',
@@ -528,15 +525,21 @@ async function githubFetchPaginated<T>(
 
     const data = (await response.json()) as T[];
     items.push(...data);
-    pagesFetched++;
+    page++;
+
+    if (onPage) {
+      const keepGoing = await onPage(data, page);
+      if (keepGoing === false) {
+        return { items, truncated: false };
+      }
+    }
 
     const linkHeader = response.headers.get('link');
     const nextMatch = linkHeader?.match(/<([^>]+)>;\s*rel="next"/);
     nextUrl = nextMatch ? nextMatch[1] : null;
   }
 
-  truncated = Boolean(nextUrl);
-  return { items, truncated };
+  return { items, truncated: false };
 }
 
 /**
@@ -1725,156 +1728,224 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
       collectionRunId: run.id,
     });
 
-    const [issueSweep, pullSweep, commitSweep] = await Promise.all([
-      sweepSafely<GitHubIssue>(() =>
-        githubFetchPaginated<GitHubIssue>(`/repos/${owner}/${name}/issues?state=all&per_page=100`, selectedToken?.raw),
+    // Existing artifacts let incremental re-runs skip data we already hold.
+    // GitHub pages newest-first, so once a full page contains nothing new we
+    // can stop: everything after it is older and already collected.
+    const existingArtifacts = await prisma.repositoryArtifact.findMany({
+      where: { repositoryId: repository.id },
+      select: { githubNodeId: true, type: true },
+    });
+    const knownCommits = new Set<string | null>(
+      existingArtifacts.filter((a) => a.type === 'COMMIT').map((a) => a.githubNodeId),
+    );
+    const knownIssuesOrPulls = new Set<string | null>(
+      existingArtifacts
+        .filter((a) => a.type === 'ISSUE' || a.type === 'PULL_REQUEST')
+        .map((a) => a.githubNodeId),
+    );
+
+    // Runs newest → oldest so progress counts as we go; each page is persisted
+    // the moment it is fetched instead of buffering the whole fetch.
+    const issues: GitHubIssue[] = [];
+    const pullPayloads: GitHubPullRequest[] = [];
+    const commitPayloads: GitHubCommit[] = [];
+
+    const trackProgress = async (phase: string) => {
+      await prisma.collectionRun.update({
+        where: { id: run.id },
+        data: {
+          phase,
+          progressItems: issues.length + pullPayloads.length + commitPayloads.length,
+          issuesCount: issues.length,
+          pullsCount: pullPayloads.length,
+          commitsCount: commitPayloads.length,
+        },
+      });
+    };
+
+    const commitSweep = await sweepSafely<GitHubCommit>(() =>
+      githubFetchPaginated<GitHubCommit>(
+        `/repos/${owner}/${name}/commits?per_page=100`,
+        selectedToken?.raw,
+        async (pageItems, page) => {
+          const fresh = pageItems.filter((commit) => !knownCommits.has(commit.node_id));
+          for (const commit of fresh) {
+            const artifact = await prisma.repositoryArtifact.upsert({
+              where: {
+                repositoryId_type_githubNodeId: {
+                  repositoryId: repository.id,
+                  type: 'COMMIT',
+                  githubNodeId: commit.node_id,
+                },
+              },
+              update: {
+                githubSha: commit.sha,
+                title: cleanString(commit.commit.message.split('\n')[0]),
+                authorLogin: cleanString(commit.author?.login),
+                htmlUrl: cleanString(commit.html_url),
+                githubCreatedAt: parseDate(commit.commit.author?.date),
+                githubUpdatedAt: parseDate(commit.commit.committer?.date),
+                collectedAt: new Date(),
+              },
+              create: {
+                repositoryId: repository.id,
+                type: 'COMMIT',
+                githubNodeId: commit.node_id,
+                githubSha: commit.sha,
+                title: cleanString(commit.commit.message.split('\n')[0]),
+                authorLogin: cleanString(commit.author?.login),
+                htmlUrl: cleanString(commit.html_url),
+                githubCreatedAt: parseDate(commit.commit.author?.date),
+                githubUpdatedAt: parseDate(commit.commit.committer?.date),
+              },
+            });
+
+            await createSnapshot({
+              repositoryId: repository.id,
+              artifactId: artifact.id,
+              entityType: 'COMMIT',
+              source: 'github_api',
+              payload: commit,
+              collectionRunId: run.id,
+            });
+
+            knownCommits.add(commit.node_id);
+            commitPayloads.push(commit);
+          }
+          await trackProgress(`FETCHING_COMMITS (page ${page})`);
+          return fresh.length === 0 ? false : true;
+        },
       ),
-      sweepSafely<GitHubPullRequest>(() =>
-        githubFetchPaginated<GitHubPullRequest>(`/repos/${owner}/${name}/pulls?state=all&per_page=100`, selectedToken?.raw),
+    );
+
+    // Pulls before issues so issues pages can treat already-collected PRs as known.
+    const pullSweep = await sweepSafely<GitHubPullRequest>(() =>
+      githubFetchPaginated<GitHubPullRequest>(
+        `/repos/${owner}/${name}/pulls?state=all&per_page=100`,
+        selectedToken?.raw,
+        async (pageItems, page) => {
+          const fresh = pageItems.filter((pull) => !knownIssuesOrPulls.has(pull.node_id));
+          for (const pull of fresh) {
+            const artifact = await prisma.repositoryArtifact.upsert({
+              where: {
+                repositoryId_type_githubNodeId: {
+                  repositoryId: repository.id,
+                  type: 'PULL_REQUEST',
+                  githubNodeId: pull.node_id,
+                },
+              },
+              update: {
+                githubNumber: pull.number,
+                title: cleanString(pull.title),
+                state: pull.state,
+                authorLogin: cleanString(pull.user?.login),
+                htmlUrl: cleanString(pull.html_url),
+                mergedAt: parseDate(pull.merged_at),
+                closedAt: parseDate(pull.closed_at),
+                githubCreatedAt: parseDate(pull.created_at),
+                githubUpdatedAt: parseDate(pull.updated_at),
+                collectedAt: new Date(),
+              },
+              create: {
+                repositoryId: repository.id,
+                type: 'PULL_REQUEST',
+                githubNodeId: pull.node_id,
+                githubNumber: pull.number,
+                title: cleanString(pull.title),
+                state: pull.state,
+                authorLogin: cleanString(pull.user?.login),
+                htmlUrl: cleanString(pull.html_url),
+                mergedAt: parseDate(pull.merged_at),
+                closedAt: parseDate(pull.closed_at),
+                githubCreatedAt: parseDate(pull.created_at),
+                githubUpdatedAt: parseDate(pull.updated_at),
+              },
+            });
+
+            await createSnapshot({
+              repositoryId: repository.id,
+              artifactId: artifact.id,
+              entityType: 'PULL_REQUEST',
+              source: 'github_api',
+              payload: pull,
+              collectionRunId: run.id,
+            });
+
+            knownIssuesOrPulls.add(pull.node_id);
+            pullPayloads.push(pull);
+          }
+          await trackProgress(`FETCHING_PULLS (page ${page})`);
+          return fresh.length === 0 ? false : true;
+        },
       ),
-      sweepSafely<GitHubCommit>(() =>
-        githubFetchPaginated<GitHubCommit>(`/repos/${owner}/${name}/commits?per_page=100`, selectedToken?.raw),
+    );
+
+    const issueSweep = await sweepSafely<GitHubIssue>(() =>
+      githubFetchPaginated<GitHubIssue>(
+        `/repos/${owner}/${name}/issues?state=all&per_page=100`,
+        selectedToken?.raw,
+        async (pageItems, page) => {
+          const fresh = pageItems.filter((item) => !knownIssuesOrPulls.has(item.node_id));
+          for (const item of fresh) {
+            if (item.pull_request) {
+              // PRs surfaced here will have been persisted by the pulls sweep.
+              knownIssuesOrPulls.add(item.node_id);
+              continue;
+            }
+
+            const artifact = await prisma.repositoryArtifact.upsert({
+              where: {
+                repositoryId_type_githubNodeId: {
+                  repositoryId: repository.id,
+                  type: 'ISSUE',
+                  githubNodeId: item.node_id,
+                },
+              },
+              update: {
+                githubNumber: item.number,
+                title: cleanString(item.title),
+                state: item.state,
+                authorLogin: cleanString(item.user?.login),
+                htmlUrl: cleanString(item.html_url),
+                closedAt: parseDate(item.closed_at),
+                githubCreatedAt: parseDate(item.created_at),
+                githubUpdatedAt: parseDate(item.updated_at),
+                collectedAt: new Date(),
+              },
+              create: {
+                repositoryId: repository.id,
+                type: 'ISSUE',
+                githubNodeId: item.node_id,
+                githubNumber: item.number,
+                title: cleanString(item.title),
+                state: item.state,
+                authorLogin: cleanString(item.user?.login),
+                htmlUrl: cleanString(item.html_url),
+                closedAt: parseDate(item.closed_at),
+                githubCreatedAt: parseDate(item.created_at),
+                githubUpdatedAt: parseDate(item.updated_at),
+              },
+            });
+
+            await createSnapshot({
+              repositoryId: repository.id,
+              artifactId: artifact.id,
+              entityType: 'ISSUE',
+              source: 'github_api',
+              payload: item,
+              collectionRunId: run.id,
+            });
+
+            knownIssuesOrPulls.add(item.node_id);
+            issues.push(item);
+          }
+          await trackProgress(`FETCHING_ISSUES (page ${page})`);
+          return fresh.length === 0 ? false : true;
+        },
       ),
-    ]);
-    const issuePayloads = issueSweep.items;
-    const pullPayloads = pullSweep.items;
-    const commitPayloads = commitSweep.items;
+    );
+
     const sweepTruncated = issueSweep.truncated || pullSweep.truncated || commitSweep.truncated;
-
-    const issues = issuePayloads.filter((issue) => !issue.pull_request);
-
-    for (const issue of issues) {
-      const artifact = await prisma.repositoryArtifact.upsert({
-        where: {
-          repositoryId_type_githubNodeId: {
-            repositoryId: repository.id,
-            type: 'ISSUE',
-            githubNodeId: issue.node_id,
-          },
-        },
-        update: {
-          githubNumber: issue.number,
-          title: cleanString(issue.title),
-          state: issue.state,
-          authorLogin: cleanString(issue.user?.login),
-          htmlUrl: cleanString(issue.html_url),
-          closedAt: parseDate(issue.closed_at),
-          githubCreatedAt: parseDate(issue.created_at),
-          githubUpdatedAt: parseDate(issue.updated_at),
-          collectedAt: new Date(),
-        },
-        create: {
-          repositoryId: repository.id,
-          type: 'ISSUE',
-          githubNodeId: issue.node_id,
-          githubNumber: issue.number,
-          title: cleanString(issue.title),
-          state: issue.state,
-          authorLogin: cleanString(issue.user?.login),
-          htmlUrl: cleanString(issue.html_url),
-          closedAt: parseDate(issue.closed_at),
-          githubCreatedAt: parseDate(issue.created_at),
-          githubUpdatedAt: parseDate(issue.updated_at),
-        },
-      });
-
-      await createSnapshot({
-        repositoryId: repository.id,
-        artifactId: artifact.id,
-        entityType: 'ISSUE',
-        source: 'github_api',
-        payload: issue,
-        collectionRunId: run.id,
-      });
-    }
-
-    for (const pull of pullPayloads) {
-      const artifact = await prisma.repositoryArtifact.upsert({
-        where: {
-          repositoryId_type_githubNodeId: {
-            repositoryId: repository.id,
-            type: 'PULL_REQUEST',
-            githubNodeId: pull.node_id,
-          },
-        },
-        update: {
-          githubNumber: pull.number,
-          title: cleanString(pull.title),
-          state: pull.state,
-          authorLogin: cleanString(pull.user?.login),
-          htmlUrl: cleanString(pull.html_url),
-          mergedAt: parseDate(pull.merged_at),
-          closedAt: parseDate(pull.closed_at),
-          githubCreatedAt: parseDate(pull.created_at),
-          githubUpdatedAt: parseDate(pull.updated_at),
-          collectedAt: new Date(),
-        },
-        create: {
-          repositoryId: repository.id,
-          type: 'PULL_REQUEST',
-          githubNodeId: pull.node_id,
-          githubNumber: pull.number,
-          title: cleanString(pull.title),
-          state: pull.state,
-          authorLogin: cleanString(pull.user?.login),
-          htmlUrl: cleanString(pull.html_url),
-          mergedAt: parseDate(pull.merged_at),
-          closedAt: parseDate(pull.closed_at),
-          githubCreatedAt: parseDate(pull.created_at),
-          githubUpdatedAt: parseDate(pull.updated_at),
-        },
-      });
-
-      await createSnapshot({
-        repositoryId: repository.id,
-        artifactId: artifact.id,
-        entityType: 'PULL_REQUEST',
-        source: 'github_api',
-        payload: pull,
-        collectionRunId: run.id,
-      });
-    }
-
-    for (const commit of commitPayloads) {
-      const artifact = await prisma.repositoryArtifact.upsert({
-        where: {
-          repositoryId_type_githubNodeId: {
-            repositoryId: repository.id,
-            type: 'COMMIT',
-            githubNodeId: commit.node_id,
-          },
-        },
-        update: {
-          githubSha: commit.sha,
-          title: cleanString(commit.commit.message.split('\n')[0]),
-          authorLogin: cleanString(commit.author?.login),
-          htmlUrl: cleanString(commit.html_url),
-          githubCreatedAt: parseDate(commit.commit.author?.date),
-          githubUpdatedAt: parseDate(commit.commit.committer?.date),
-          collectedAt: new Date(),
-        },
-        create: {
-          repositoryId: repository.id,
-          type: 'COMMIT',
-          githubNodeId: commit.node_id,
-          githubSha: commit.sha,
-          title: cleanString(commit.commit.message.split('\n')[0]),
-          authorLogin: cleanString(commit.author?.login),
-          htmlUrl: cleanString(commit.html_url),
-          githubCreatedAt: parseDate(commit.commit.author?.date),
-          githubUpdatedAt: parseDate(commit.commit.committer?.date),
-        },
-      });
-
-      await createSnapshot({
-        repositoryId: repository.id,
-        artifactId: artifact.id,
-        entityType: 'COMMIT',
-        source: 'github_api',
-        payload: commit,
-        collectionRunId: run.id,
-      });
-    }
 
     const accountGithubLogin =
       account && selectedToken
@@ -1906,6 +1977,8 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
         pullsCount: pullPayloads.length,
         commitsCount: commitPayloads.length,
         truncated: sweepTruncated,
+        phase: 'COMPLETED',
+        progressItems: issues.length + pullPayloads.length + commitPayloads.length,
       },
       include: {
         repository: true,
@@ -1922,6 +1995,7 @@ app.post<{ Body: SyncPayload }>(`${API_PREFIX}/repositories/sync`, async (reques
         status: 'FAILED',
         completedAt: new Date(),
         errorMessage: message,
+        phase: 'FAILED',
       },
     });
 
